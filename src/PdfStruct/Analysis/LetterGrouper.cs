@@ -34,7 +34,7 @@ namespace PdfStruct.Analysis;
 /// statistics to be robust on short heading lines.
 /// </para>
 /// </remarks>
-internal sealed class LetterGrouper : IWordExtractor
+public sealed class LetterGrouper : IWordExtractor
 {
     /// <summary>Singleton instance, matching the convention used by PdfPig's bundled extractors.</summary>
     public static readonly IWordExtractor Instance = new LetterGrouper();

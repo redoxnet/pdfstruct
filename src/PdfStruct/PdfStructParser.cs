@@ -8,6 +8,7 @@ using PdfStruct.Safety;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Core;
+using PdfPigWhitespaceCover = UglyToad.PdfPig.DocumentLayoutAnalysis.WhitespaceCoverExtractor;
 
 namespace PdfStruct;
 
@@ -44,6 +45,18 @@ public readonly record struct HeadingDiagnosticRow(
 public readonly record struct TextLineDiagnosticRow(
     int PageNumber,
     Analysis.TextBlock Line);
+
+/// <summary>
+/// One row of page-block diagnostic output, produced after paragraph merging
+/// and reading-order sorting but before classification. Used by the
+/// <c>bench-segmenter</c> CLI verb and other tools that compare PdfStruct's
+/// block partition against external page segmenters.
+/// </summary>
+/// <param name="PageNumber">1-indexed page number where the block appears.</param>
+/// <param name="Block">The merged text block with its bounding box and style signals.</param>
+public readonly record struct PageBlockDiagnosticRow(
+    int PageNumber,
+    Analysis.TextBlock Block);
 
 /// <summary>
 /// Main entry point for RAG-optimized PDF extraction.
@@ -159,6 +172,32 @@ public sealed class PdfStructParser
         return rows;
     }
 
+    /// <summary>
+    /// Extracts per-page text blocks after paragraph merging and reading-order
+    /// sorting, but before classification, list detection, and running-furniture
+    /// removal. Intended for layout-comparison harnesses that pit PdfStruct's
+    /// block partition against alternative page segmenters on a shared input.
+    /// </summary>
+    /// <param name="filePath">Path to the input PDF.</param>
+    /// <returns>One row per merged block, in page extraction order.</returns>
+    /// <exception cref="FileNotFoundException">Thrown when the file does not exist.</exception>
+    public IReadOnlyList<PageBlockDiagnosticRow> AnalyzePageBlocks(string filePath)
+    {
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException("PDF file not found.", filePath);
+
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(filePath);
+        var rows = new List<PageBlockDiagnosticRow>();
+        for (var p = 1; p <= pdf.NumberOfPages; p++)
+        {
+            var page = pdf.GetPage(p);
+            foreach (var block in ExtractPageBlocks(page))
+                rows.Add(new PageBlockDiagnosticRow(p, block));
+        }
+
+        return rows;
+    }
+
     /// <summary>Per-page extraction + neighbour-aware scoring for diagnostic output.</summary>
     private IReadOnlyList<HeadingDiagnosticRow> AnalyzeHeadingProbabilitiesInternal(UglyToad.PdfPig.PdfDocument pdf)
     {
@@ -202,12 +241,14 @@ public sealed class PdfStructParser
         var pageLines = new Dictionary<int, IReadOnlyList<TextLineBlock>>(pdf.NumberOfPages);
         var pageGeometries = new Dictionary<int, PageGeometry>(pdf.NumberOfPages);
         var pageHeights = new Dictionary<int, double>(pdf.NumberOfPages);
+        var pageGutters = new Dictionary<int, IReadOnlyList<PdfRectangle>>(pdf.NumberOfPages);
         for (var p = 1; p <= pdf.NumberOfPages; p++)
         {
             var page = pdf.GetPage(p);
             pageGeometries[p] = new PageGeometry(page.Width, page.Height);
             pageHeights[p] = page.Height;
             pageLines[p] = ExtractPageTextLines(page);
+            pageGutters[p] = DetectColumnGutters(page, _options.FilterHiddenText);
         }
 
         if (_options.ExcludeHeadersFooters)
@@ -227,7 +268,7 @@ public sealed class PdfStructParser
         for (var p = 1; p <= pdf.NumberOfPages; p++)
         {
             PageGeometry? pageGeometry = _options.ExcludeHeadersFooters ? pageGeometries[p] : null;
-            var blocks = BuildPageBlocks(pageLines[p], pageGeometry);
+            var blocks = BuildPageBlocks(pageLines[p], pageGeometry, pageGutters[p]);
 
             if (pageLists.TryGetValue(p, out var listsOnPage))
             {
@@ -919,18 +960,22 @@ public sealed class PdfStructParser
     private IReadOnlyList<TextBlock> ExtractPageBlocks(Page page)
     {
         var lines = ExtractPageTextLines(page);
+        var gutters = DetectColumnGutters(page, _options.FilterHiddenText);
         PageGeometry? pageGeometry = _options.ExcludeHeadersFooters ? new PageGeometry(page.Width, page.Height) : null;
-        return BuildPageBlocks(lines, pageGeometry);
+        return BuildPageBlocks(lines, pageGeometry, gutters);
     }
 
     private IReadOnlyList<TextBlock> BuildPageBlocks(
         IReadOnlyList<TextLineBlock> lines,
-        PageGeometry? pageGeometry = null)
+        PageGeometry? pageGeometry = null,
+        IReadOnlyList<PdfRectangle>? columnGutters = null)
     {
         if (lines.Count == 0) return [];
 
-        var orderedLines = DetermineTextLineReadingOrder(lines);
-        var textBlocks = MergeLinesIntoBlocks(orderedLines);
+        var textBlocks = columnGutters is { Count: > 0 }
+            ? BuildPageBlocksColumnAware(lines, columnGutters)
+            : BuildPageBlocksSingleColumn(lines);
+
         if (pageGeometry is { } geometry)
         {
             textBlocks = textBlocks
@@ -941,6 +986,152 @@ public sealed class PdfStructParser
 
         var ordered = _layoutAnalyzer.DetermineReadingOrder(textBlocks);
         return WithStandaloneFlag(ordered);
+    }
+
+    /// <summary>
+    /// Single-column path: existing reading-order + line-merge pipeline. Used
+    /// for pages where <see cref="DetectColumnGutters"/> finds no structural
+    /// vertical gutter.
+    /// </summary>
+    private List<TextBlock> BuildPageBlocksSingleColumn(IReadOnlyList<TextLineBlock> lines)
+    {
+        var orderedLines = DetermineTextLineReadingOrder(lines);
+        return MergeLinesIntoBlocks(orderedLines);
+    }
+
+    /// <summary>
+    /// Column-aware path: lines whose vertical centre falls inside the
+    /// gutter band are partitioned by column (assigned by horizontal centre
+    /// against the gutter X-centres) and merged column-locally; lines above
+    /// or below the band fall back to the single-column path so headings
+    /// or footers that span columns are not sliced.
+    /// </summary>
+    private List<TextBlock> BuildPageBlocksColumnAware(
+        IReadOnlyList<TextLineBlock> lines,
+        IReadOnlyList<PdfRectangle> columnGutters)
+    {
+        var bandTop = columnGutters.Max(g => g.Top);
+        var bandBottom = columnGutters.Min(g => g.Bottom);
+        var boundaries = columnGutters
+            .Select(g => (g.Left + g.Right) / 2.0)
+            .OrderBy(c => c)
+            .ToList();
+
+        var aboveBand = new List<TextLineBlock>();
+        var belowBand = new List<TextLineBlock>();
+        var columns = new List<List<TextLineBlock>>(boundaries.Count + 1);
+        for (var i = 0; i < boundaries.Count + 1; i++)
+            columns.Add(new List<TextLineBlock>());
+
+        foreach (var line in lines)
+        {
+            var lineCenterY = (line.Top + line.Bottom) / 2.0;
+            if (lineCenterY > bandTop)
+                aboveBand.Add(line);
+            else if (lineCenterY < bandBottom)
+                belowBand.Add(line);
+            else
+                columns[ColumnIndex(line, boundaries)].Add(line);
+        }
+
+        var result = new List<TextBlock>();
+
+        if (aboveBand.Count > 0)
+            result.AddRange(BuildPageBlocksSingleColumn(aboveBand));
+
+        for (var c = 0; c < columns.Count; c++)
+        {
+            if (columns[c].Count == 0) continue;
+            var orderedColumn = columns[c].OrderByDescending(l => l.Top).ToList();
+            result.AddRange(MergeLinesIntoBlocks(orderedColumn));
+        }
+
+        if (belowBand.Count > 0)
+            result.AddRange(BuildPageBlocksSingleColumn(belowBand));
+
+        return result;
+    }
+
+    /// <summary>
+    /// Returns the index of the column slab that <paramref name="line"/>
+    /// belongs to, by binary placement of the line's horizontal centre
+    /// against the gutter <paramref name="boundaries"/>. Slab count is
+    /// <c>boundaries.Count + 1</c>.
+    /// </summary>
+    private static int ColumnIndex(TextLineBlock line, IReadOnlyList<double> boundaries)
+    {
+        var center = (line.Left + line.Right) / 2.0;
+        for (var i = 0; i < boundaries.Count; i++)
+        {
+            if (center < boundaries[i]) return i;
+        }
+        return boundaries.Count;
+    }
+
+    /// <summary>
+    /// Detects structural vertical gutters on a page using PdfPig's
+    /// <see cref="PdfPigWhitespaceCover"/>. A gutter must span at least
+    /// 50% of the page height and be no wider than 10% of the page width;
+    /// returned rectangles drive column-aware line partitioning in
+    /// <see cref="BuildPageBlocksColumnAware"/>. Pages with sparse content,
+    /// no qualifying gutter, or single-column layouts get an empty list and
+    /// fall through to the legacy page-wide pipeline.
+    /// </summary>
+    /// <remarks>
+    /// Two near-coincident gutters within 5pt of each other on the X-axis
+    /// are deduplicated to a single boundary; gutter pairs that flank a
+    /// narrow strip of decoration text (the central line-number column on
+    /// US patent body pages, for example) sit ~30pt apart and are kept
+    /// separately, producing the three-column slab layout the strip
+    /// requires.
+    /// </remarks>
+    private static IReadOnlyList<PdfRectangle> DetectColumnGutters(Page page, bool filterHiddenText)
+    {
+        IReadOnlyList<Letter> letters;
+        if (filterHiddenText)
+        {
+            var visibleLetters = page.Letters.Where(IsVisibleLetter).ToList();
+            letters = visibleLetters.Count > 0 ? visibleLetters : page.Letters;
+        }
+        else
+        {
+            letters = page.Letters;
+        }
+
+        if (letters.Count == 0) return [];
+
+        var words = LetterGrouper.Instance.GetWords(letters).ToList();
+        if (words.Count < 10) return [];
+
+        var whitespaces = PdfPigWhitespaceCover.GetWhitespaces(
+            words,
+            images: null,
+            maxRectangleCount: 200);
+
+        var minGutterHeight = page.Height * 0.5;
+        var maxGutterWidth = page.Width * 0.1;
+
+        var gutters = whitespaces
+            .Where(ws => ws.Width > 0
+                         && ws.Height >= minGutterHeight
+                         && ws.Width <= maxGutterWidth)
+            .OrderBy(ws => (ws.Left + ws.Right) / 2.0)
+            .ToList();
+
+        if (gutters.Count == 0) return [];
+
+        var deduplicated = new List<PdfRectangle>();
+        var lastCenter = double.NegativeInfinity;
+        const double minSeparation = 5.0;
+        foreach (var g in gutters)
+        {
+            var center = (g.Left + g.Right) / 2.0;
+            if (center - lastCenter < minSeparation) continue;
+            deduplicated.Add(g);
+            lastCenter = center;
+        }
+
+        return deduplicated;
     }
 
     private IReadOnlyList<TextLineBlock> DetermineTextLineReadingOrder(IReadOnlyList<TextLineBlock> lines)

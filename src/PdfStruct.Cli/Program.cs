@@ -37,6 +37,7 @@ internal static class App
             {
                 "extract" => Extract(ExtractOptions.Parse(rest)),
                 "diagnose" => Diagnose(DiagnoseOptions.Parse(rest)),
+                "bench-segmenter" => BenchSegmenterCommand.Run(BenchSegmenterOptions.Parse(rest)),
                 _ => UnknownCommand(verb)
             };
         }
@@ -230,6 +231,7 @@ internal static class App
         writer.WriteLine("Usage:");
         writer.WriteLine("  pdfstruct extract <input.pdf> [options]");
         writer.WriteLine("  pdfstruct diagnose <input.pdf> [options]");
+        writer.WriteLine("  pdfstruct bench-segmenter <input.pdf> -o <output-dir>");
         writer.WriteLine();
         writer.WriteLine("Extract options:");
         writer.WriteLine("  -o, --output <path>       Write output to a file instead of stdout.");
@@ -243,6 +245,9 @@ internal static class App
         writer.WriteLine("Diagnose options:");
         writer.WriteLine("  -o, --output <path>       Write the heading-probability CSV to a file. Default: stdout.");
         writer.WriteLine();
+        writer.WriteLine("Bench-segmenter options:");
+        writer.WriteLine("  -o, --output <dir>        Directory under which per-algorithm PNGs and summary.txt are written.");
+        writer.WriteLine();
         writer.WriteLine("  -h, --help                Show help.");
         writer.WriteLine();
         writer.WriteLine("Examples:");
@@ -251,6 +256,7 @@ internal static class App
         writer.WriteLine("  pdfstruct extract document.pdf -o out.json --format json");
         writer.WriteLine("  pdfstruct extract document.pdf --debug-image out --debug-lines");
         writer.WriteLine("  pdfstruct diagnose document.pdf -o scores.csv");
+        writer.WriteLine("  pdfstruct bench-segmenter document.pdf -o bench-out/");
     }
 }
 
