@@ -1069,6 +1069,40 @@ public sealed class PdfStructParser
     }
 
     /// <summary>
+    /// Returns the page's embedded images filtered down to those that
+    /// should act as layout obstacles for whitespace-cover analysis.
+    /// Images covering ≥ <see cref="LayoutBackdropAreaRatio"/> of the
+    /// page area are treated as full-page backdrops (scanned page
+    /// rasters with text overlay, paper-texture backgrounds) and
+    /// excluded, because including them collapses the entire page into
+    /// a single obstacle and eliminates every whitespace rectangle.
+    /// </summary>
+    /// <param name="page">The PdfPig page whose images to filter.</param>
+    /// <returns>Inline images that should be obstacles for layout analysis.</returns>
+    public static IEnumerable<UglyToad.PdfPig.Content.IPdfImage> GetLayoutObstacleImages(Page page)
+    {
+        var pageArea = page.Width * page.Height;
+        if (pageArea <= 0) return [];
+
+        var threshold = pageArea * LayoutBackdropAreaRatio;
+        return page.GetImages().Where(img =>
+        {
+            var bbox = img.BoundingBox;
+            return bbox.Width * bbox.Height < threshold;
+        });
+    }
+
+    /// <summary>
+    /// Area-ratio threshold used by <see cref="GetLayoutObstacleImages"/>
+    /// to discard full-page backdrop images. Empirically, scanned-page
+    /// rasters in image-over-OCR PDFs (older patents, government scans)
+    /// cover ≥ 95% of the page; genuine inline figures rarely exceed
+    /// 70% even when they dominate the page. 0.8 cleanly separates the
+    /// two without tuning per fixture.
+    /// </summary>
+    private const double LayoutBackdropAreaRatio = 0.8;
+
+    /// <summary>
     /// Detects structural vertical gutters on a page using PdfPig's
     /// <see cref="PdfPigWhitespaceCover"/>. A gutter must span at least
     /// 50% of the page height and be no wider than 10% of the page width;
@@ -1105,7 +1139,7 @@ public sealed class PdfStructParser
 
         var whitespaces = PdfPigWhitespaceCover.GetWhitespaces(
             words,
-            images: null,
+            images: GetLayoutObstacleImages(page),
             maxRectangleCount: 200);
 
         var minGutterHeight = page.Height * 0.5;

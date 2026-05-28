@@ -110,7 +110,7 @@ internal static class BenchSegmenterCommand
                 var xyBlocks = RecursiveXYCut.Instance.GetBlocks(words);
                 var docstrumBlocks = DocstrumBoundingBoxes.Instance.GetBlocks(words);
                 var whitespaces = words.Count > 0
-                    ? WhitespaceCoverExtractor.GetWhitespaces(words)
+                    ? WhitespaceCoverExtractor.GetWhitespaces(words, images: PdfStructParser.GetLayoutObstacleImages(page))
                     : Array.Empty<PdfRectangle>();
                 var oursBlocks = oursRowsByPage.TryGetValue(p, out var rows)
                     ? (IReadOnlyList<PdfStructTextBlock>)rows.Select(r => r.Block).ToList()
