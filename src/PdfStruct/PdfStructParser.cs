@@ -241,14 +241,14 @@ public sealed class PdfStructParser
         var pageLines = new Dictionary<int, IReadOnlyList<TextLineBlock>>(pdf.NumberOfPages);
         var pageGeometries = new Dictionary<int, PageGeometry>(pdf.NumberOfPages);
         var pageHeights = new Dictionary<int, double>(pdf.NumberOfPages);
-        var pageGutters = new Dictionary<int, IReadOnlyList<PdfRectangle>>(pdf.NumberOfPages);
+        var pageCuts = new Dictionary<int, (IReadOnlyList<PdfRectangle> Vertical, IReadOnlyList<PdfRectangle> Horizontal)>(pdf.NumberOfPages);
         for (var p = 1; p <= pdf.NumberOfPages; p++)
         {
             var page = pdf.GetPage(p);
             pageGeometries[p] = new PageGeometry(page.Width, page.Height);
             pageHeights[p] = page.Height;
             pageLines[p] = ExtractPageTextLines(page);
-            pageGutters[p] = DetectColumnGutters(page, _options.FilterHiddenText);
+            pageCuts[p] = DetectStructuralCuts(page, _options.FilterHiddenText);
         }
 
         if (_options.ExcludeHeadersFooters)
@@ -268,7 +268,7 @@ public sealed class PdfStructParser
         for (var p = 1; p <= pdf.NumberOfPages; p++)
         {
             PageGeometry? pageGeometry = _options.ExcludeHeadersFooters ? pageGeometries[p] : null;
-            var blocks = BuildPageBlocks(pageLines[p], pageGeometry, pageGutters[p]);
+            var blocks = BuildPageBlocks(pageLines[p], pageGeometry, pageCuts[p].Vertical, pageCuts[p].Horizontal);
 
             if (pageLists.TryGetValue(p, out var listsOnPage))
             {
@@ -960,20 +960,22 @@ public sealed class PdfStructParser
     private IReadOnlyList<TextBlock> ExtractPageBlocks(Page page)
     {
         var lines = ExtractPageTextLines(page);
-        var gutters = DetectColumnGutters(page, _options.FilterHiddenText);
+        var (vCuts, hCuts) = DetectStructuralCuts(page, _options.FilterHiddenText);
         PageGeometry? pageGeometry = _options.ExcludeHeadersFooters ? new PageGeometry(page.Width, page.Height) : null;
-        return BuildPageBlocks(lines, pageGeometry, gutters);
+        return BuildPageBlocks(lines, pageGeometry, vCuts, hCuts);
     }
 
     private IReadOnlyList<TextBlock> BuildPageBlocks(
         IReadOnlyList<TextLineBlock> lines,
         PageGeometry? pageGeometry = null,
-        IReadOnlyList<PdfRectangle>? columnGutters = null)
+        IReadOnlyList<PdfRectangle>? verticalCuts = null,
+        IReadOnlyList<PdfRectangle>? horizontalCuts = null)
     {
         if (lines.Count == 0) return [];
 
-        var textBlocks = columnGutters is { Count: > 0 }
-            ? BuildPageBlocksColumnAware(lines, columnGutters)
+        var hasCuts = (verticalCuts is { Count: > 0 }) || (horizontalCuts is { Count: > 0 });
+        var textBlocks = hasCuts
+            ? BuildPageBlocksFromCuts(lines, verticalCuts ?? [], horizontalCuts ?? [])
             : BuildPageBlocksSingleColumn(lines);
 
         if (pageGeometry is { } geometry)
@@ -990,8 +992,8 @@ public sealed class PdfStructParser
 
     /// <summary>
     /// Single-column path: existing reading-order + line-merge pipeline. Used
-    /// for pages where <see cref="DetectColumnGutters"/> finds no structural
-    /// vertical gutter.
+    /// for pages where <see cref="DetectStructuralCuts"/> finds no structural
+    /// vertical or horizontal cuts.
     /// </summary>
     private List<TextBlock> BuildPageBlocksSingleColumn(IReadOnlyList<TextLineBlock> lines)
     {
@@ -1000,19 +1002,29 @@ public sealed class PdfStructParser
     }
 
     /// <summary>
-    /// Column-aware path: lines whose vertical centre falls inside the
-    /// gutter band are partitioned by column (assigned by horizontal centre
-    /// against the gutter X-centres) and merged column-locally; lines above
-    /// or below the band fall back to the single-column path so headings
-    /// or footers that span columns are not sliced.
+    /// Cut-based partitioner: structural cuts from
+    /// <see cref="DetectStructuralCuts"/> define authoritative block
+    /// boundaries. Vertical cuts split lines into column slabs (within
+    /// the gutter band — lines above or below fall through to the
+    /// single-column path so headings spanning columns are not sliced);
+    /// within each column slab, horizontal cuts further split lines into
+    /// row regions. Each region's lines are merged into blocks by the
+    /// existing line-merger, so structural cuts act as hard upper bounds
+    /// on how big a block can grow rather than replacing per-line merge
+    /// criteria.
     /// </summary>
-    private List<TextBlock> BuildPageBlocksColumnAware(
+    /// <param name="lines">All page lines in extraction order.</param>
+    /// <param name="verticalCuts">Vertical structural cuts (column gutters).</param>
+    /// <param name="horizontalCuts">Horizontal structural cuts (paragraph or section breaks).</param>
+    private List<TextBlock> BuildPageBlocksFromCuts(
         IReadOnlyList<TextLineBlock> lines,
-        IReadOnlyList<PdfRectangle> columnGutters)
+        IReadOnlyList<PdfRectangle> verticalCuts,
+        IReadOnlyList<PdfRectangle> horizontalCuts)
     {
-        var bandTop = columnGutters.Max(g => g.Top);
-        var bandBottom = columnGutters.Min(g => g.Bottom);
-        var boundaries = columnGutters
+        var hasVerticalCuts = verticalCuts.Count > 0;
+        var bandTop = hasVerticalCuts ? verticalCuts.Max(g => g.Top) : double.PositiveInfinity;
+        var bandBottom = hasVerticalCuts ? verticalCuts.Min(g => g.Bottom) : double.NegativeInfinity;
+        var boundaries = verticalCuts
             .Select(g => (g.Left + g.Right) / 2.0)
             .OrderBy(c => c)
             .ToList();
@@ -1042,12 +1054,62 @@ public sealed class PdfStructParser
         for (var c = 0; c < columns.Count; c++)
         {
             if (columns[c].Count == 0) continue;
-            var orderedColumn = columns[c].OrderByDescending(l => l.Top).ToList();
-            result.AddRange(MergeLinesIntoBlocks(orderedColumn));
+            var slabLeft = c == 0 ? double.NegativeInfinity : boundaries[c - 1];
+            var slabRight = c == boundaries.Count ? double.PositiveInfinity : boundaries[c];
+            result.AddRange(MergeColumnSlabWithHorizontalCuts(columns[c], horizontalCuts, slabLeft, slabRight));
         }
 
         if (belowBand.Count > 0)
             result.AddRange(BuildPageBlocksSingleColumn(belowBand));
+
+        return result;
+    }
+
+    /// <summary>
+    /// Slices a column slab's lines into row regions using horizontal
+    /// cuts whose horizontal extent overlaps the slab's X-range, then
+    /// merges each region's lines into blocks. A horizontal cut applies
+    /// to a slab only when its left edge sits to the left of the slab's
+    /// right boundary and its right edge to the right of the slab's
+    /// left boundary; cuts that fall entirely outside the slab are
+    /// ignored.
+    /// </summary>
+    private List<TextBlock> MergeColumnSlabWithHorizontalCuts(
+        List<TextLineBlock> slabLines,
+        IReadOnlyList<PdfRectangle> horizontalCuts,
+        double slabLeft,
+        double slabRight)
+    {
+        var applicableCuts = horizontalCuts
+            .Where(cut => cut.Left < slabRight && cut.Right > slabLeft)
+            .Select(cut => (cut.Top + cut.Bottom) / 2.0)
+            .OrderByDescending(y => y)
+            .ToList();
+
+        var ordered = slabLines.OrderByDescending(l => l.Top).ToList();
+
+        if (applicableCuts.Count == 0)
+            return MergeLinesIntoBlocks(ordered);
+
+        var result = new List<TextBlock>();
+        var rowLines = new List<TextLineBlock>();
+        var nextCutIndex = 0;
+        foreach (var line in ordered)
+        {
+            var lineCenterY = (line.Top + line.Bottom) / 2.0;
+            while (nextCutIndex < applicableCuts.Count && lineCenterY < applicableCuts[nextCutIndex])
+            {
+                if (rowLines.Count > 0)
+                {
+                    result.AddRange(MergeLinesIntoBlocks(rowLines));
+                    rowLines = [];
+                }
+                nextCutIndex++;
+            }
+            rowLines.Add(line);
+        }
+        if (rowLines.Count > 0)
+            result.AddRange(MergeLinesIntoBlocks(rowLines));
 
         return result;
     }
@@ -1103,23 +1165,24 @@ public sealed class PdfStructParser
     private const double LayoutBackdropAreaRatio = 0.8;
 
     /// <summary>
-    /// Detects structural vertical gutters on a page using PdfPig's
-    /// <see cref="PdfPigWhitespaceCover"/>. A gutter must span at least
-    /// 50% of the page height and be no wider than 10% of the page width;
-    /// returned rectangles drive column-aware line partitioning in
-    /// <see cref="BuildPageBlocksColumnAware"/>. Pages with sparse content,
-    /// no qualifying gutter, or single-column layouts get an empty list and
-    /// fall through to the legacy page-wide pipeline.
+    /// Detects structural cuts on a page from PdfPig's
+    /// <see cref="PdfPigWhitespaceCover"/> output, classified by
+    /// <see cref="StructuralCutClassifier"/>: vertical (column gutters)
+    /// and horizontal (paragraph or section breaks). Both lists are
+    /// deduplicated on their primary axis with a 5pt minimum centre
+    /// separation so two near-coincident whitespace rectangles collapse
+    /// to one boundary; deliberate gutter pairs (e.g. the central
+    /// line-number column on US patent body pages, ~30pt apart) survive
+    /// the dedup and produce the three-slab layout they require.
+    /// Pages with sparse content (&lt;10 words) yield empty lists.
     /// </summary>
-    /// <remarks>
-    /// Two near-coincident gutters within 5pt of each other on the X-axis
-    /// are deduplicated to a single boundary; gutter pairs that flank a
-    /// narrow strip of decoration text (the central line-number column on
-    /// US patent body pages, for example) sit ~30pt apart and are kept
-    /// separately, producing the three-column slab layout the strip
-    /// requires.
-    /// </remarks>
-    private static IReadOnlyList<PdfRectangle> DetectColumnGutters(Page page, bool filterHiddenText)
+    /// <param name="page">The PdfPig page to analyse.</param>
+    /// <param name="filterHiddenText">When <c>true</c>, restricts the
+    /// word stream feeding WhitespaceCover to visibly-rendered letters
+    /// so OCR overlay text on scanned PDFs does not pollute obstacle
+    /// detection.</param>
+    /// <returns>Vertical and horizontal structural-cut rectangles for the page.</returns>
+    private static (IReadOnlyList<PdfRectangle> Vertical, IReadOnlyList<PdfRectangle> Horizontal) DetectStructuralCuts(Page page, bool filterHiddenText)
     {
         IReadOnlyList<Letter> letters;
         if (filterHiddenText)
@@ -1132,40 +1195,60 @@ public sealed class PdfStructParser
             letters = page.Letters;
         }
 
-        if (letters.Count == 0) return [];
+        if (letters.Count == 0) return ([], []);
 
         var words = LetterGrouper.Instance.GetWords(letters).ToList();
-        if (words.Count < 10) return [];
+        if (words.Count < 10) return ([], []);
 
         var whitespaces = PdfPigWhitespaceCover.GetWhitespaces(
             words,
             images: GetLayoutObstacleImages(page),
             maxRectangleCount: 200);
 
-        var minGutterHeight = page.Height * 0.5;
-        var maxGutterWidth = page.Width * 0.1;
+        var vertical = DeduplicateByCenter(
+            whitespaces
+                .Where(ws => StructuralCutClassifier.IsVerticalCutCandidate(ws, page.Width, page.Height))
+                .OrderBy(ws => (ws.Left + ws.Right) / 2.0),
+            ws => (ws.Left + ws.Right) / 2.0,
+            minSeparation: 5.0);
 
-        var gutters = whitespaces
-            .Where(ws => ws.Width > 0
-                         && ws.Height >= minGutterHeight
-                         && ws.Width <= maxGutterWidth)
-            .OrderBy(ws => (ws.Left + ws.Right) / 2.0)
-            .ToList();
+        var wordBoxes = words.Select(w => w.BoundingBox).ToList();
+        var horizontal = DeduplicateByCenter(
+            whitespaces
+                .Where(ws => StructuralCutClassifier.IsHorizontalCutCandidate(ws, page.Width, page.Height))
+                .Where(ws => StructuralCutClassifier.IsCleanHorizontalGap(ws, wordBoxes))
+                .OrderByDescending(ws => (ws.Top + ws.Bottom) / 2.0),
+            ws => (ws.Top + ws.Bottom) / 2.0,
+            minSeparation: 5.0);
 
-        if (gutters.Count == 0) return [];
+        return (vertical, horizontal);
+    }
 
-        var deduplicated = new List<PdfRectangle>();
+    /// <summary>
+    /// Collapses near-coincident cut rectangles into a single representative
+    /// per axis centre. Walks the supplied sequence in input order, emitting
+    /// each rectangle whose centre is at least <paramref name="minSeparation"/>
+    /// from the last emitted centre.
+    /// </summary>
+    /// <param name="cuts">Cut rectangles, pre-sorted by primary-axis centre.</param>
+    /// <param name="centerSelector">Projects a rectangle to its primary-axis centre.</param>
+    /// <param name="minSeparation">Minimum acceptable distance (PDF points) between consecutive centres.</param>
+    /// <returns>Deduplicated rectangles in input order.</returns>
+    private static List<PdfRectangle> DeduplicateByCenter(
+        IEnumerable<PdfRectangle> cuts,
+        Func<PdfRectangle, double> centerSelector,
+        double minSeparation)
+    {
+        var result = new List<PdfRectangle>();
         var lastCenter = double.NegativeInfinity;
-        const double minSeparation = 5.0;
-        foreach (var g in gutters)
+        foreach (var cut in cuts)
         {
-            var center = (g.Left + g.Right) / 2.0;
-            if (center - lastCenter < minSeparation) continue;
-            deduplicated.Add(g);
+            var center = centerSelector(cut);
+            if (Math.Abs(center - lastCenter) < minSeparation) continue;
+            result.Add(cut);
             lastCenter = center;
         }
-
-        return deduplicated;
+        return result;
     }
 
     private IReadOnlyList<TextLineBlock> DetermineTextLineReadingOrder(IReadOnlyList<TextLineBlock> lines)

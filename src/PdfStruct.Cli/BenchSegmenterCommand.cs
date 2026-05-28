@@ -65,18 +65,6 @@ internal static class BenchSegmenterCommand
     /// <summary>Color used to draw whitespace rectangles that are neither structural verticals nor horizontals.</summary>
     private static readonly SKColor BackgroundWhitespaceColor = new(140, 140, 140);
 
-    /// <summary>Whitespace must span at least this fraction of the page height to be considered a candidate vertical cut.</summary>
-    private const double VerticalCutMinHeightRatio = 0.5;
-
-    /// <summary>Whitespace wider than this fraction of the page is too wide to be a vertical gutter.</summary>
-    private const double VerticalCutMaxWidthRatio = 0.1;
-
-    /// <summary>Whitespace must span at least this fraction of the page width to be considered a candidate horizontal cut.</summary>
-    private const double HorizontalCutMinWidthRatio = 0.4;
-
-    /// <summary>Whitespace shorter than this absolute height (points) is ignored as a horizontal cut, to avoid inter-line gaps.</summary>
-    private const double HorizontalCutMinHeightPoints = 8.0;
-
     /// <summary>Runs the bench-segmenter verb end-to-end.</summary>
     /// <param name="options">Parsed command options.</param>
     /// <returns>Process exit code.</returns>
@@ -122,11 +110,13 @@ internal static class BenchSegmenterCommand
                     ? (IReadOnlyList<PdfStructTextBlock>)rows.Select(r => r.Block).ToList()
                     : [];
 
+                var wordBoxes = words.Select(w => w.BoundingBox).ToList();
                 var verticalCuts = whitespaces
-                    .Where(ws => IsVerticalCutCandidate(ws, page))
+                    .Where(ws => StructuralCutClassifier.IsVerticalCutCandidate(ws, page.Width, page.Height))
                     .ToList();
                 var horizontalCuts = whitespaces
-                    .Where(ws => IsHorizontalCutCandidate(ws, page))
+                    .Where(ws => StructuralCutClassifier.IsHorizontalCutCandidate(ws, page.Width, page.Height))
+                    .Where(ws => StructuralCutClassifier.IsCleanHorizontalGap(ws, wordBoxes))
                     .ToList();
 
                 pageStats.Add(new PageStat(
@@ -298,36 +288,6 @@ internal static class BenchSegmenterCommand
             Directory.CreateDirectory(outputDirectory);
         using var stream = File.Create(outputPath);
         data.SaveTo(stream);
-    }
-
-    /// <summary>
-    /// Returns true when a whitespace rectangle has the shape of a column
-    /// gutter: tall enough to span at least <see cref="VerticalCutMinHeightRatio"/>
-    /// of the page height, and narrow enough to not be a margin or full-width
-    /// gap (≤ <see cref="VerticalCutMaxWidthRatio"/> of the page width).
-    /// </summary>
-    private static bool IsVerticalCutCandidate(PdfRectangle ws, Page page)
-    {
-        return ws.Height >= page.Height * VerticalCutMinHeightRatio
-            && ws.Width <= page.Width * VerticalCutMaxWidthRatio
-            && ws.Width > 0;
-    }
-
-    /// <summary>
-    /// Returns true when a whitespace rectangle has the shape of a major
-    /// horizontal break (paragraph or section separator): wide enough to
-    /// cross at least <see cref="HorizontalCutMinWidthRatio"/> of the page,
-    /// and tall enough (≥ <see cref="HorizontalCutMinHeightPoints"/>) to
-    /// not be a single-line gap. Rectangles that already qualify as
-    /// vertical cuts are excluded to avoid double-classifying full-page
-    /// margins.
-    /// </summary>
-    private static bool IsHorizontalCutCandidate(PdfRectangle ws, Page page)
-    {
-        if (IsVerticalCutCandidate(ws, page)) return false;
-        return ws.Width >= page.Width * HorizontalCutMinWidthRatio
-            && ws.Height >= HorizontalCutMinHeightPoints
-            && ws.Height > 0;
     }
 
     /// <summary>
