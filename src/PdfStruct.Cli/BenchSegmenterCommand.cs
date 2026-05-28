@@ -109,6 +109,12 @@ internal static class BenchSegmenterCommand
 
                 var xyBlocks = RecursiveXYCut.Instance.GetBlocks(words);
                 var docstrumBlocks = DocstrumBoundingBoxes.Instance.GetBlocks(words);
+                var allImages = page.GetImages().ToList();
+                var pageArea = page.Width * page.Height;
+                var maxImageAreaRatio = pageArea > 0 && allImages.Count > 0
+                    ? allImages.Max(img => (img.BoundingBox.Width * img.BoundingBox.Height) / pageArea)
+                    : 0.0;
+
                 var whitespaces = words.Count > 0
                     ? WhitespaceCoverExtractor.GetWhitespaces(words, images: PdfStructParser.GetLayoutObstacleImages(page))
                     : Array.Empty<PdfRectangle>();
@@ -126,6 +132,8 @@ internal static class BenchSegmenterCommand
                 pageStats.Add(new PageStat(
                     PageNumber: p,
                     WordCount: words.Count,
+                    ImageCount: allImages.Count,
+                    MaxImageAreaRatio: maxImageAreaRatio,
                     XyCutBlocks: xyBlocks.Count,
                     DocstrumBlocks: docstrumBlocks.Count,
                     Whitespaces: whitespaces.Count,
@@ -191,11 +199,11 @@ internal static class BenchSegmenterCommand
             "Note: WhitespaceCoverExtractor returns whitespace gutters, not blocks. Counts are not directly comparable to the other rows.",
             "vertical-cut/horizontal-cut rows count subsets of the WhitespaceCover output, classified by the StructuralCuts criteria.",
             string.Empty,
-            "page  words   xycut  docstrum  whitespace  v-cuts  h-cuts  ours",
+            "page  words  imgs  maxImg%   xycut  docstrum  whitespace  v-cuts  h-cuts  ours",
         };
 
         foreach (var s in stats)
-            lines.Add($"{s.PageNumber,4}  {s.WordCount,5}  {s.XyCutBlocks,6}  {s.DocstrumBlocks,8}  {s.Whitespaces,10}  {s.VerticalCuts,6}  {s.HorizontalCuts,6}  {s.OurBlocks,4}");
+            lines.Add($"{s.PageNumber,4}  {s.WordCount,5}  {s.ImageCount,4}  {s.MaxImageAreaRatio * 100,7:F1}  {s.XyCutBlocks,6}  {s.DocstrumBlocks,8}  {s.Whitespaces,10}  {s.VerticalCuts,6}  {s.HorizontalCuts,6}  {s.OurBlocks,4}");
 
         File.WriteAllLines(Path.Combine(outputDirectory, "summary.txt"), lines);
         foreach (var line in lines)
@@ -505,6 +513,8 @@ internal static class BenchSegmenterCommand
     private readonly record struct PageStat(
         int PageNumber,
         int WordCount,
+        int ImageCount,
+        double MaxImageAreaRatio,
         int XyCutBlocks,
         int DocstrumBlocks,
         int Whitespaces,
