@@ -37,6 +37,18 @@ public static class StructuralCutClassifier
     public const double VerticalCutMaxWidthRatio = 0.1;
 
     /// <summary>
+    /// Minimum width (PDF points) for a whitespace rectangle to count
+    /// as a column gutter. The floor rejects narrow tall strips formed
+    /// by intra-column hanging-indent gaps — e.g. on academic-paper
+    /// references pages, the space between a label column (<c>[6]</c>,
+    /// <c>[7]</c>, ...) and the body it introduces spans the full
+    /// column height but is only 5-7pt wide. Real two-column gutters
+    /// in body layouts are typically 15-30pt wide, so 8pt cleanly
+    /// separates the two cases.
+    /// </summary>
+    public const double VerticalCutMinWidthPoints = 8.0;
+
+    /// <summary>
     /// Whitespace must span at least this fraction of the page width
     /// to be considered a candidate horizontal (paragraph or section)
     /// break.
@@ -61,7 +73,7 @@ public static class StructuralCutClassifier
     /// <param name="pageHeight">The page height in PDF points.</param>
     public static bool IsVerticalCutCandidate(PdfRectangle whitespace, double pageWidth, double pageHeight)
     {
-        return whitespace.Width > 0
+        return whitespace.Width >= VerticalCutMinWidthPoints
             && whitespace.Height >= pageHeight * VerticalCutMinHeightRatio
             && whitespace.Width <= pageWidth * VerticalCutMaxWidthRatio;
     }
