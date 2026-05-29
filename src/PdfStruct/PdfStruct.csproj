@@ -7,6 +7,8 @@
     <PackageId>PdfStruct</PackageId>
     <Version>0.1.0-alpha.1</Version>
     <Authors>Jong Hyun Kim</Authors>
+    <Company>RedoxNet</Company>
+    <Copyright>Copyright (c) 2026 RedoxNet</Copyright>
     <Description>PDF layout intelligence for .NET — structured extraction with bounding boxes, reading order, and semantic element detection. Outputs Markdown and structured JSON with per-element bounding boxes. Built on PdfPig.</Description>
     <PackageTags>pdf;rag;markdown;json;bounding-box;layout-analysis;document-parsing;ai;llm;reading-order</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>

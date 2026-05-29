@@ -2,9 +2,28 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
-    <PackageId>PdfStruct.Cli</PackageId>
     <RootNamespace>PdfStruct.Cli</RootNamespace>
-    <IsPackable>false</IsPackable>
+
+    <!-- dotnet tool packaging. Command name is pdfstruct; the assembly name
+         stays PdfStruct.Cli to avoid the case-insensitive collision with the
+         library's PdfStruct.dll that breaks GenerateDepsFile. -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>pdfstruct</ToolCommandName>
+
+    <!-- NuGet -->
+    <PackageId>PdfStruct.Cli</PackageId>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>Jong Hyun Kim</Authors>
+    <Company>RedoxNet</Company>
+    <Description>Command-line tool for PdfStruct — RAG-optimized structured extraction from PDFs. Produces Markdown and structured JSON with per-element bounding boxes. Install with `dotnet tool install -g PdfStruct.Cli` and run as `pdfstruct`.</Description>
+    <PackageTags>pdf;rag;markdown;json;bounding-box;layout-analysis;document-parsing;cli;dotnet-tool;reading-order</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/redoxnet/pdfstruct</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/redoxnet/pdfstruct</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) 2026 RedoxNet</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,7 +32,24 @@
     <PackageReference Include="PdfPig" />
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\PdfStruct\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\PdfStruct\icon.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\NOTICE" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- SkiaSharp's native packages ship multi-hundred-MB .pdb symbols next to
+       their native libs. They are useless in a release tool and would bloat the
+       nupkg ~100 MB, so drop every native runtime .pdb before the tool is packed. -->
+  <Target Name="StripNativePdbsFromTool" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(Extension)' == '.pdb' and $([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').Contains('runtimes'))" />
+    </ItemGroup>
+  </Target>
 
   <Target Name="CopyAppHostAsPdfstruct" AfterTargets="Build" Condition="'$(OutputType)' == 'Exe'">
     <PropertyGroup>
