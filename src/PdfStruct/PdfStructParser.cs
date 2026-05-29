@@ -247,8 +247,8 @@ public sealed class PdfStructParser
             var page = pdf.GetPage(p);
             pageGeometries[p] = new PageGeometry(page.Width, page.Height);
             pageHeights[p] = page.Height;
-            pageLines[p] = ExtractPageTextLines(page);
             pageCuts[p] = DetectStructuralCuts(page, _options.FilterHiddenText);
+            pageLines[p] = ExtractPageTextLines(page, pageCuts[p].Vertical);
         }
 
         if (_options.ExcludeHeadersFooters)
@@ -959,8 +959,8 @@ public sealed class PdfStructParser
     /// </summary>
     private IReadOnlyList<TextBlock> ExtractPageBlocks(Page page)
     {
-        var lines = ExtractPageTextLines(page);
         var (vCuts, hCuts) = DetectStructuralCuts(page, _options.FilterHiddenText);
+        var lines = ExtractPageTextLines(page, vCuts);
         PageGeometry? pageGeometry = _options.ExcludeHeadersFooters ? new PageGeometry(page.Width, page.Height) : null;
         return BuildPageBlocks(lines, pageGeometry, vCuts, hCuts);
     }
@@ -1269,7 +1269,7 @@ public sealed class PdfStructParser
     /// Extracts text lines for a page before paragraph merging. This keeps the
     /// word-to-line stage separate from the later line-to-block stage.
     /// </summary>
-    private IReadOnlyList<TextLineBlock> ExtractPageTextLines(Page page)
+    private IReadOnlyList<TextLineBlock> ExtractPageTextLines(Page page, IReadOnlyList<PdfRectangle>? verticalCuts = null)
     {
         // The "Neither" / "NeitherClip" rendering modes (Tr 3 / Tr 7) are the
         // PDF spec's way of saying "do not draw this glyph". Some scanned
@@ -1297,7 +1297,7 @@ public sealed class PdfStructParser
             : [];
         if (words.Count == 0) return [];
 
-        var lines = GroupWordsIntoLines(words);
+        var lines = GroupWordsIntoLines(words, verticalCuts ?? []);
         if (_options.FilterHiddenText)
             lines = FilterTextLines(lines, page.Width, page.Height);
 
@@ -1431,7 +1431,7 @@ public sealed class PdfStructParser
     /// 3.6pt below it.
     /// </para>
     /// </remarks>
-    private static List<TextLineBlock> GroupWordsIntoLines(List<Word> words)
+    private static List<TextLineBlock> GroupWordsIntoLines(List<Word> words, IReadOnlyList<PdfRectangle> verticalCuts)
     {
         if (words.Count == 0) return [];
 
@@ -1489,6 +1489,8 @@ public sealed class PdfStructParser
         {
             var byX = rawLine.OrderBy(w => w.BoundingBox.Left).ToList();
             var splitIndices = FindOutlierGapSplits(byX);
+            if (verticalCuts.Count > 0)
+                splitIndices = MergeSortedDistinct(splitIndices, FindVerticalCutSplits(byX, verticalCuts));
             var start = 0;
             foreach (var splitIndex in splitIndices)
             {
@@ -1499,6 +1501,74 @@ public sealed class PdfStructParser
         }
 
         return lines;
+    }
+
+    /// <summary>
+    /// Returns the indices in <paramref name="wordsByX"/> after which a vertical
+    /// structural cut crosses the inter-word gap. Used to slice raw lines along
+    /// page-wide column boundaries so that left-column body, centre line-number,
+    /// and right-column body words on the same baseline never land in a single
+    /// line — gap-statistics on those rows alone do not reliably detect the
+    /// column boundary because the gap between adjacent body text and a
+    /// one-glyph line-number sits within the noise of intra-word kerning.
+    /// Only cuts whose vertical extent overlaps the raw line's Y range count;
+    /// a tall column gutter on a body region does not split a short heading
+    /// that sits above the gutter band.
+    /// </summary>
+    private static List<int> FindVerticalCutSplits(IReadOnlyList<Word> wordsByX, IReadOnlyList<PdfRectangle> verticalCuts)
+    {
+        double rawTop = wordsByX[0].BoundingBox.Top;
+        double rawBottom = wordsByX[0].BoundingBox.Bottom;
+        for (var k = 1; k < wordsByX.Count; k++)
+        {
+            rawTop = Math.Max(rawTop, wordsByX[k].BoundingBox.Top);
+            rawBottom = Math.Min(rawBottom, wordsByX[k].BoundingBox.Bottom);
+        }
+
+        var rawCenterY = (rawTop + rawBottom) / 2.0;
+        var applicableCenters = verticalCuts
+            .Where(c => c.Top >= rawCenterY && c.Bottom <= rawCenterY)
+            .Select(c => (c.Left + c.Right) / 2.0)
+            .OrderBy(x => x)
+            .ToList();
+
+        if (applicableCenters.Count == 0) return [];
+
+        var splits = new List<int>();
+        var cutIndex = 0;
+        for (var i = 0; i < wordsByX.Count - 1 && cutIndex < applicableCenters.Count; i++)
+        {
+            var rightEdgeLeft = wordsByX[i].BoundingBox.Right;
+            var leftEdgeRight = wordsByX[i + 1].BoundingBox.Left;
+            while (cutIndex < applicableCenters.Count && applicableCenters[cutIndex] <= rightEdgeLeft)
+                cutIndex++;
+            if (cutIndex < applicableCenters.Count && applicableCenters[cutIndex] < leftEdgeRight)
+                splits.Add(i);
+        }
+        return splits;
+    }
+
+    /// <summary>
+    /// Merges two ascending lists of split indices into a single ascending
+    /// distinct list. Used to combine outlier-gap splits with vertical-cut
+    /// splits inside <see cref="GroupWordsIntoLines"/> without double-emitting
+    /// the same boundary.
+    /// </summary>
+    private static List<int> MergeSortedDistinct(List<int> a, List<int> b)
+    {
+        if (b.Count == 0) return a;
+        if (a.Count == 0) return b;
+        var result = new List<int>(a.Count + b.Count);
+        int i = 0, j = 0;
+        while (i < a.Count && j < b.Count)
+        {
+            if (a[i] < b[j]) { result.Add(a[i++]); }
+            else if (a[i] > b[j]) { result.Add(b[j++]); }
+            else { result.Add(a[i++]); j++; }
+        }
+        while (i < a.Count) result.Add(a[i++]);
+        while (j < b.Count) result.Add(b[j++]);
+        return result;
     }
 
     /// <summary>
