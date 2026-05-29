@@ -1353,6 +1353,19 @@ public sealed class PdfStructParser
             letters = page.Letters;
         }
 
+        // Drop rotated and otherwise non-horizontal glyphs from the line-
+        // grouping stream: their PdfPig bounding boxes typically share a
+        // baseline-Y range with horizontal text on the same row, and the
+        // baseline-only line grouper would otherwise pull them into the same
+        // TextLineBlock — producing the canonical arXiv side-watermark
+        // ("arXiv:1901.03003v1 [cs.CV] 10 Jan 2019") leaking into the
+        // abstract paragraph on 1901.03003 page 1. Per-page guard: when the
+        // letter stream is entirely non-horizontal, keep it so vertical CJK
+        // pages or pure-watermark fixtures do not vanish.
+        var horizontalLetters = letters.Where(l => l.TextOrientation == TextOrientation.Horizontal).ToList();
+        if (horizontalLetters.Count > 0)
+            letters = horizontalLetters;
+
         var words = letters.Count > 0
             ? LetterGrouper.Instance.GetWords(letters).ToList()
             : [];
