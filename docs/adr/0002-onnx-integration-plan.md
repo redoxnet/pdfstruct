@@ -13,7 +13,7 @@
 - Stable text and bounding-box extraction through PdfPig.
 - Typography-driven heading detection based on font-size rarity, font-weight rarity, standalone rows, center alignment, vertical gaps, and line-count decay.
 - XY-Cut-style multi-column reading order.
-- Markdown and JSON output compatible with OpenDataLoader-oriented workflows.
+- Markdown and structured JSON output with per-element bounding boxes.
 - Running header/footer filtering and list detection are already present as heuristic pipeline stages.
 
 ### 1.2 The two hard problems are different

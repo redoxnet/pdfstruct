@@ -4,11 +4,9 @@ Guidance for Claude Code agents working in this repository.
 
 ## What this repo is
 
-PdfStruct is a .NET library and CLI for **RAG-optimized structured extraction** from PDFs. It produces Markdown (for LLM context) and OpenDataLoader-compatible JSON (for citations and bbox-grounded retrieval) from a single parse.
+PdfStruct is a .NET library and CLI for **RAG-optimized structured extraction** from PDFs. It produces Markdown (for LLM context) and structured JSON with per-element bounding boxes (for citations and bbox-grounded retrieval) from a single parse.
 
-The C# / .NET ecosystem currently has no equivalent — PdfStruct is the gap-filler. Inspiration comes from [OpenDataLoader-pdf](https://github.com/datactivist/opendataloader-pdf), and ODL JSON shape compatibility is a deliberate design goal, not just a coincidence.
-
-**Golden reference for algorithm decisions:** when the right approach to a layout-analysis or classification problem is unclear, consult the local clone at `D:\Codes\opendataloader-pdf` first. The heading-probability scoring, running header/footer detection, paragraph merging, and reading-order rules are all ports of ODL's algorithms — match its behavior unless there is a stated reason to diverge.
+The C# / .NET ecosystem currently has no equivalent — PdfStruct is the gap-filler.
 
 ## Layout
 
@@ -19,7 +17,7 @@ src/
     Analysis/        XyCutLayoutAnalyzer, FontBasedElementClassifier (probabilistic),
                      RegexHeadingClassifier (pattern-driven), CompositeElementClassifier,
                      DocumentStatistics + RarityTable, RunningFurnitureDetector
-    Rendering/       Markdown + JSON renderers (ODL-compatible JSON keys)
+    Rendering/       Markdown + JSON renderers
     Safety/          Prompt-injection filter, text sanitizer
     PdfStructParser  Public entry point
   PdfStruct.Cli/     Console app with `extract` and `diagnose` verbs, packaged later
@@ -58,7 +56,7 @@ Drop test PDFs into `playground/` (gitignored). The build also copies the apphos
 - **XML doc comments**: every public type and method gets a full `<summary>`/`<param>`/`<returns>`/`<exception>` block. Private methods get at least a one-line `<summary>`. Keep the style concise — match what's already in `PdfStructParser.cs` and `Renderers.cs`.
 - **No comments that explain *what* the code does** — well-named identifiers do that. Comments only for non-obvious *why*: a hidden constraint, a workaround, an invariant a reader would otherwise miss.
 - **No backwards-compatibility shims, removed-code markers, or "// TODO future" placeholders.** If something is unused, delete it.
-- **ODL JSON compatibility is load-bearing.** The JSON renderer uses ODL key names with spaces (`"file name"`, `"bounding box"`, `"page number"`, etc.) and ODL element typing (`level: "Title"` plus `heading level: 1`). Don't unilaterally rename keys, change `bounding box` from array to object, or remove duplicated fields — those are ODL-mandated, not redundant. If you genuinely need a non-ODL JSON shape, add it as an option, don't break the default.
+- **JSON shape is a public contract.** The renderer uses key names with spaces (`"file name"`, `"bounding box"`, `"page number"`, etc.) and element typing (`level: "Title"` plus `heading level: 1`). Don't unilaterally rename keys, change `bounding box` from array to object, or remove duplicated fields — they look redundant but downstream consumers depend on them. If you genuinely need a different JSON shape, add it as an option, don't break the default.
 - **Date/time fields** in JSON should serialize as ISO 8601 (`2026-04-30T11:30:09+09:00`), not the PDF raw `D:YYYYMMDDhhmmss±HH'mm'` form.
 - **Heading classification**: language-specific heuristics (e.g., Korean legal patterns like `제N장`, `전문`, `부칙`) belong in their own `IElementClassifier` strategy, not inlined into `FontBasedElementClassifier`. Compose classifiers; don't stack heuristics into one class.
 - **CLI executable naming**: do not set `<AssemblyName>pdfstruct</AssemblyName>` on `PdfStruct.Cli.csproj` — it case-insensitively collides with the library's `PdfStruct.dll` and breaks `GenerateDepsFile`. The post-build `Copy` target in the csproj produces `pdfstruct.exe` alongside the original output. The eventual `dotnet tool` packaging will use `<ToolCommandName>pdfstruct</ToolCommandName>` for the launcher.

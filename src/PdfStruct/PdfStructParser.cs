@@ -17,7 +17,7 @@ namespace PdfStruct;
 /// </summary>
 /// <param name="Document">The parsed document model.</param>
 /// <param name="Markdown">Markdown output, or <c>null</c> if not requested.</param>
-/// <param name="Json">JSON output (OpenDataLoader-compatible), or <c>null</c> if not requested.</param>
+/// <param name="Json">Structured JSON output, or <c>null</c> if not requested.</param>
 public sealed record PdfStructResult(
     Models.PdfDocument Document,
     string? Markdown,
@@ -337,13 +337,14 @@ public sealed class PdfStructParser
     /// renderer clamps to H6 at output time.
     /// </summary>
     /// <remarks>
-    /// Ports the OpenDataLoader-pdf <c>HeadingProcessor</c> level-assignment
-    /// pass with two extensions: indent and alignment join the style key
-    /// (so a document whose chapter/section/sub-section headings share font
-    /// and weight but sit at distinct left margins can still cluster into
-    /// distinct levels), and headings that arrive with a non-zero
-    /// <see cref="Models.HeadingElement.HeadingLevel"/> are treated as
-    /// already-authoritative and left unchanged. The latter preserves the
+    /// Clusters headings by a style key that combines font, weight, indent, and
+    /// alignment, then assigns levels by rank within the cluster (largest /
+    /// boldest / leftmost gets the smallest level number). Indent and
+    /// alignment are part of the key so a document whose chapter / section /
+    /// sub-section headings share font and weight but sit at distinct left
+    /// margins still clusters into distinct levels. Headings that arrive with
+    /// a non-zero <see cref="Models.HeadingElement.HeadingLevel"/> are treated
+    /// as already-authoritative and left unchanged, which preserves the
     /// hierarchy a pattern-driven classifier (e.g.
     /// <see cref="Analysis.RegexHeadingClassifier"/>) intentionally
     /// assigned per pattern.
@@ -442,11 +443,11 @@ public sealed class PdfStructParser
         fontName.Contains("Black", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Returns the structural label for a heading level. Mirrors OpenDataLoader-pdf's
-    /// vocabulary: <c>Doctitle</c> for the document title (level 1) and <c>Subtitle</c>
-    /// for every nested heading (level 2 and below). The numeric depth is carried by
-    /// <see cref="Models.HeadingElement.HeadingLevel"/>; this string is the coarse
-    /// semantic tag, not a depth encoding.
+    /// Returns the structural label for a heading level: <c>Doctitle</c> for
+    /// the document title (level 1) and <c>Subtitle</c> for every nested
+    /// heading (level 2 and below). The numeric depth is carried by
+    /// <see cref="Models.HeadingElement.HeadingLevel"/>; this string is the
+    /// coarse semantic tag, not a depth encoding.
     /// </summary>
     private static string HeadingLevelLabel(int level) => level == 1 ? "Doctitle" : "Subtitle";
 
@@ -961,9 +962,9 @@ public sealed class PdfStructParser
     /// </summary>
     /// <remarks>
     /// PdfPig surfaces the PDF date dictionary as the raw string PDF stores
-    /// it. Emitting that string directly into the OpenDataLoader-compatible
-    /// JSON makes the field hostile to anyone reading it; ISO 8601 keeps
-    /// the field usable while preserving the documented JSON shape.
+    /// it. Emitting that string directly into JSON makes the field hostile
+    /// to anyone reading it; ISO 8601 keeps the field usable while
+    /// preserving the documented JSON shape.
     /// </remarks>
     private static string? NormalizePdfDate(string? raw)
     {

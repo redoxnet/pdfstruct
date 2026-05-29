@@ -7,7 +7,7 @@
 
 ## Why PdfStruct?
 
-The .NET ecosystem has **zero** RAG-optimized PDF extraction libraries. Python has OpenDataLoader, Docling, pymupdf4llm, Marker — C# has nothing.
+The .NET ecosystem has **zero** RAG-optimized PDF extraction libraries. Python has Docling, pymupdf4llm, Marker, and a handful of others — C# has nothing.
 
 PdfStruct fills that gap: a pure .NET library that extracts **structured content** from PDFs — headings, paragraphs, tables, lists — with bounding boxes for every element. Output as Markdown (for LLM context) or JSON (for citations). No GPU, no cloud, no JVM.
 
@@ -43,7 +43,7 @@ var result = parser.Parse("document.pdf");
 // Markdown — feed directly into your RAG chunking pipeline
 Console.WriteLine(result.Markdown);
 
-// JSON — OpenDataLoader-compatible, bounding boxes included
+// JSON — structured element tree with bounding boxes
 File.WriteAllText("output.json", result.Json);
 ```
 
@@ -61,7 +61,7 @@ File.WriteAllText("output.json", result.Json);
 | Running header / footer / side-furniture filtering | ✅ |
 | Bounding box per element | ✅ |
 | Markdown output | ✅ |
-| JSON output (OpenDataLoader-compatible, ISO 8601 dates) | ✅ |
+| JSON output (structured element tree, ISO 8601 dates) | ✅ |
 | Prompt injection filtering | ✅ |
 | Invalid character replacement | ✅ |
 | Sensitive text sanitization (optional) | ✅ |
@@ -74,7 +74,7 @@ File.WriteAllText("output.json", result.Json);
 
 ## What works, what doesn't
 
-PdfStruct's heading detection is **typography-driven**, following [OpenDataLoader-pdf](https://github.com/datactivist/opendataloader-pdf)'s probabilistic model: blocks are scored on font-size rarity, font-weight rarity, standalone-row layout, and short-single-line shape, and the document's distinct heading styles are clustered into a 1..N hierarchy.
+PdfStruct's heading detection is **typography-driven**. Blocks are scored on font-size rarity, font-weight rarity, standalone-row layout, and short-single-line shape, and the document's distinct heading styles are clustered into a 1..N hierarchy.
 
 Where this works well:
 
@@ -87,7 +87,7 @@ Where it doesn't (yet):
 - **Documents whose section markers carry no typographic distinction** — the Korean constitution's `제1장`, `제1절`, `제1관` are typeset in the same font and size as body paragraphs. Without language-specific patterns, only the document title is detected as a heading. Inject patterns via [`RegexHeadingClassifier`](src/PdfStruct/Analysis/RegexHeadingClassifier.cs) when the corpus needs it (see "Custom heading patterns" below).
 - **Magazine pull-quotes** — large display type that visually quotes body text scores high on font rarity and is sometimes misclassified as a heading. Layout-level disambiguation (pull-quote shape, position offset) is not yet implemented.
 - **Tables of contents with prominent page numbers** — the page-number column at heading-sized type is misclassified.
-- **Inline bold or italic runs inside paragraphs** are not preserved — paragraphs are flattened to plain text on the way to Markdown and JSON, matching ODL's behavior. Per-line bold and italic flags are tracked internally (sourced from PdfPig's `FontDetails`) but do not yet propagate into paragraph-internal styling.
+- **Inline bold or italic runs inside paragraphs** are not preserved — paragraphs are flattened to plain text on the way to Markdown and JSON. Per-line bold and italic flags are tracked internally (sourced from PdfPig's `FontDetails`) but do not yet propagate into paragraph-internal styling.
 - **Tables, unordered lists, and inline images** are not yet detected (Phase 2 roadmap). Ordered numeric lists (`1. … 2. … 3. …`) are detected and emitted as `list` elements with paragraph children.
 
 ## Output
@@ -104,7 +104,7 @@ This paper presents a novel approach to...
 Previous studies have shown that...
 ```
 
-### JSON (OpenDataLoader-compatible)
+### JSON
 
 ```json
 {

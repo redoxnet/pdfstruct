@@ -38,3 +38,9 @@ todo/
 
 # CLI output
 out/
+
+# Local comparison harness (external baselines kept off-repo)
+compare-baseline.ps1
+run-baseline-golden.ps1
+docs/baseline-divergence-log.md
+docs/pdfpig-baseline-mapping.md

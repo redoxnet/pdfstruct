@@ -1,8 +1,8 @@
 # Fixture ground-truth files
 
-Hand-marked Markdown for committed test fixtures. Each `<name>.md` here is the **expected** output for `<name>.pdf` under `src/PdfStruct.Tests/Fixtures/`, written by a human reading the PDF page by page. Ground truth is the tiebreaker when PdfStruct's output and ODL's reference output disagree (see `docs/odl-divergence-log.md`).
+Hand-marked Markdown for committed test fixtures. Each `<name>.md` here is the **expected** output for `<name>.pdf` under `src/PdfStruct.Tests/Fixtures/`, written by a human reading the PDF page by page.
 
-These files exist to support precision/recall measurement of element detection. Without ground truth, every divergence vs ODL stays `investigate` in the log because we cannot say which side is correct. With ground truth, we can score each tool independently and rank work items by recovery target instead of by gap to ODL's count.
+These files exist to support precision/recall measurement of element detection. With ground truth in hand, the extractor can be scored independently against a fixed target rather than against another tool's count.
 
 ## Format
 
@@ -43,4 +43,4 @@ Ground-truth fixtures cover PdfStruct's regression matrix. They are added one at
 | `letter` | 2026-05-04 | hand-written-style personal letter; the title `MY DEAREST` is rendered as letter-spaced glyphs (`M Y   D E A R E S T`) which the extractor cannot recover without a normalisation pass that would distort other fixtures, so this entry sits at the upper bound of what is reachable rather than what is currently produced |
 | `plos_utilizing_llm` | — | two-column academic with references and bullet lists |
 
-When all six exist, `compare-to-ground-truth.ps1` (not yet written) will compute element-level precision and recall for both PdfStruct and ODL against this set.
+When all six exist, `compare-to-ground-truth.ps1` (not yet written) will compute element-level precision and recall for PdfStruct against this set.

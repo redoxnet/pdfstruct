@@ -77,8 +77,8 @@ public sealed class XyCutLayoutAnalyzer : ILayoutAnalyzer
     /// <summary>
     /// Initializes a new instance of <see cref="XyCutLayoutAnalyzer"/>.
     /// </summary>
-    /// <param name="minGapRatioX">Retained for API compatibility; cut detection uses an ODL-style absolute gap threshold.</param>
-    /// <param name="minGapRatioY">Retained for API compatibility; cut detection uses an ODL-style absolute gap threshold.</param>
+    /// <param name="minGapRatioX">Retained for API compatibility; cut detection uses an absolute gap threshold in PDF points.</param>
+    /// <param name="minGapRatioY">Retained for API compatibility; cut detection uses an absolute gap threshold in PDF points.</param>
     public XyCutLayoutAnalyzer(double minGapRatioX = 0.01, double minGapRatioY = 0.005)
     {
         _ = minGapRatioX;

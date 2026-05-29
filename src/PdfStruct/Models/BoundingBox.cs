@@ -6,7 +6,7 @@ namespace PdfStruct.Models;
 /// <summary>
 /// Represents a bounding box in PDF coordinate space.
 /// Coordinates are in PDF points (72 points = 1 inch), origin at bottom-left.
-/// Compatible with OpenDataLoader PDF's [left, bottom, right, top] format.
+/// Serialises to the four-element array <c>[left, bottom, right, top]</c>.
 /// </summary>
 /// <param name="Left">Left edge X coordinate.</param>
 /// <param name="Bottom">Bottom edge Y coordinate.</param>
@@ -67,12 +67,12 @@ public readonly record struct BoundingBox(
             Math.Max(Top, other.Top));
 
     /// <summary>
-    /// Converts to the OpenDataLoader-compatible array format [left, bottom, right, top].
+    /// Converts to the array format <c>[left, bottom, right, top]</c>.
     /// </summary>
     public double[] ToArray() => [Left, Bottom, Right, Top];
 
     /// <summary>
-    /// Creates a <see cref="BoundingBox"/> from an OpenDataLoader-compatible array.
+    /// Creates a <see cref="BoundingBox"/> from a four-element <c>[left, bottom, right, top]</c> array.
     /// </summary>
     /// <exception cref="ArgumentException">Thrown when the array does not contain exactly 4 elements.</exception>
     public static BoundingBox FromArray(double[] coords)

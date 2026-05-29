@@ -13,7 +13,7 @@ public enum OutputFormat
 {
     /// <summary>Structured Markdown output for LLM context and RAG chunking.</summary>
     Markdown = 1,
-    /// <summary>JSON with bounding boxes (OpenDataLoader-compatible).</summary>
+    /// <summary>Structured JSON with per-element bounding boxes.</summary>
     Json = 2,
     /// <summary>Both Markdown and JSON.</summary>
     Both = Markdown | Json
@@ -69,23 +69,22 @@ public sealed class PdfStructOptions
 
     /// <summary>
     /// Gets or sets the legacy minimum horizontal gap ratio. Retained for API
-    /// compatibility; the current XY-Cut analyzer uses an ODL-style absolute
-    /// gap threshold.
+    /// compatibility; the current XY-Cut analyzer uses an absolute gap
+    /// threshold in PDF points.
     /// </summary>
     public double MinGapRatioX { get; set; } = 0.01;
 
     /// <summary>
     /// Gets or sets the legacy minimum vertical gap ratio. Retained for API
-    /// compatibility; the current XY-Cut analyzer uses an ODL-style absolute
-    /// gap threshold.
+    /// compatibility; the current XY-Cut analyzer uses an absolute gap
+    /// threshold in PDF points.
     /// </summary>
     public double MinGapRatioY { get; set; } = 0.005;
 
     /// <summary>
     /// Gets or sets the heading-probability threshold used by the default
     /// <see cref="Analysis.FontBasedElementClassifier"/>. Blocks scoring
-    /// above this value are classified as headings. Default: 0.75
-    /// (matches OpenDataLoader-pdf).
+    /// above this value are classified as headings. Default: 0.75.
     /// </summary>
     public double HeadingProbabilityThreshold { get; set; } = 0.75;
 }

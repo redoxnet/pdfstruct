@@ -74,7 +74,7 @@ public sealed class HeadingElement : ContentElement
     /// <summary>Gets or sets the heading level (1 = h1, 2 = h2, ...). Uncapped on the data model; renderers clamp to their target as needed.</summary>
     public int HeadingLevel { get; set; } = 1;
 
-    /// <summary>Gets or sets the coarse structural label. Mirrors OpenDataLoader-pdf's vocabulary: <c>Doctitle</c> at level 1, <c>Subtitle</c> at level 2 and below.</summary>
+    /// <summary>Gets or sets the coarse structural label: <c>Doctitle</c> at level 1, <c>Subtitle</c> at level 2 and below.</summary>
     public string Level { get; set; } = "Doctitle";
 
     /// <summary>Gets or sets the text properties.</summary>

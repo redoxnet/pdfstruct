@@ -5,7 +5,7 @@ namespace PdfStruct.Models;
 
 /// <summary>
 /// Represents the structured extraction result of an entire PDF document.
-/// Output format is compatible with OpenDataLoader PDF's JSON schema.
+/// Serialises to a JSON tree of bounding-box-annotated content elements.
 /// </summary>
 public sealed class PdfDocument
 {

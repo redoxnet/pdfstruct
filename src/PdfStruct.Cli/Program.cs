@@ -472,7 +472,7 @@ internal enum OutputKind
     /// <summary>Render as Markdown.</summary>
     Markdown,
 
-    /// <summary>Render as OpenDataLoader-compatible JSON.</summary>
+    /// <summary>Render as structured JSON with per-element bounding boxes.</summary>
     Json
 }
 

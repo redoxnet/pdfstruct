@@ -109,13 +109,11 @@ public interface IElementClassifier
 /// count.
 /// </summary>
 /// <remarks>
-/// Ports the OpenDataLoader-pdf <c>HeadingProcessor</c> approach, which in
-/// turn ports veraPDF's <c>NodeUtils.headingProbability</c>. The probability
-/// model is intentionally language-agnostic — every signal is layout- or
-/// typography-derived, no text patterns are inspected. Documents whose
-/// section headers carry no typographic distinction (e.g. legal corpora that
-/// rely solely on textual markers like <c>제1장</c>) need a domain-specific
-/// classifier composed in front of this one via
+/// The probability model is intentionally language-agnostic — every signal
+/// is layout- or typography-derived, no text patterns are inspected.
+/// Documents whose section headers carry no typographic distinction (e.g.
+/// legal corpora that rely solely on textual markers like <c>제1장</c>) need
+/// a domain-specific classifier composed in front of this one via
 /// <see cref="CompositeElementClassifier"/>.
 /// </remarks>
 public sealed class FontBasedElementClassifier : IElementClassifier
@@ -139,9 +137,9 @@ public sealed class FontBasedElementClassifier : IElementClassifier
     /// Initializes a new instance of <see cref="FontBasedElementClassifier"/>.
     /// </summary>
     /// <param name="headingProbabilityThreshold">
-    /// Probability above which a block is classified as a heading. ODL uses
-    /// <c>0.75</c>; tune downward to recall more headings or upward to reduce
-    /// false positives. Default <c>0.75</c>.
+    /// Probability above which a block is classified as a heading. Tune
+    /// downward to recall more headings or upward to reduce false positives.
+    /// Default <c>0.75</c>.
     /// </param>
     public FontBasedElementClassifier(double headingProbabilityThreshold = 0.75)
         : this(headingProbabilityThreshold, fontSizeRarityWeight: 0.5, fontWeightRarityWeight: 0.3, bulletedBoost: 0.1)
@@ -313,8 +311,8 @@ public sealed class FontBasedElementClassifier : IElementClassifier
     /// Computes the per-signal breakdown of the candidate at <paramref name="index"/>
     /// against its neighbours. The previous block's classification (already
     /// determined by the left-to-right pass) flips the neighbour comparison
-    /// into a next-only check, mirroring veraPDF's "if previous is heading,
-    /// don't compare the candidate against it again" rule.
+    /// into a next-only check: when the previous block is already a heading,
+    /// the candidate is not re-compared against it.
     /// </summary>
     private HeadingProbabilityBreakdown ComputeBreakdown(
         int index,
@@ -331,17 +329,17 @@ public sealed class FontBasedElementClassifier : IElementClassifier
 
         if (prevIsHeading && nextIndex < 0)
         {
-            // veraPDF tail-block rule: when the previous block is already a
-            // heading and there is no next neighbour to compare against,
-            // refuse to chain another heading at the document's tail.
-            // Applies regardless of how heading-like the candidate looks —
-            // the chain has nowhere to extend, and a body-like candidate
-            // could still pick up a positive prev_score against the
-            // immediately-preceding heading without the rule firing.
+            // Tail-block rule: when the previous block is already a heading
+            // and there is no next neighbour to compare against, refuse to
+            // chain another heading at the document's tail. Applies regardless
+            // of how heading-like the candidate looks — the chain has nowhere
+            // to extend, and a body-like candidate could still pick up a
+            // positive prev_score against the immediately-preceding heading
+            // without the rule firing.
             return new HeadingProbabilityBreakdown(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0);
         }
 
-        // The veraPDF prev-is-heading shortcut (compare only against the next
+        // The prev-is-heading shortcut (compare only against the next
         // neighbour) only makes sense when the candidate is itself
         // typographically distinct enough to be a heading. Without this guard,
         // body text immediately following a heading inherits a strong
@@ -525,8 +523,11 @@ public sealed class FontBasedElementClassifier : IElementClassifier
 
     /// <summary>
     /// Computes the multiplicative line-count decay. Single-line blocks
-    /// pass through unchanged; multi-line blocks are progressively crushed.
-    /// Matches the ODL/veraPDF formula <c>max(0, 1 - 0.0291·(n-1)²)</c>.
+    /// pass through unchanged; multi-line blocks are progressively crushed
+    /// by <c>max(0, 1 - k·(n-1)²)</c> where <c>k = LineDecayCoefficient</c>.
+    /// The quadratic shape drives the score to zero at the tenth line, so
+    /// long paragraphs cannot accumulate heading probability no matter how
+    /// strong their typography signal is.
     /// </summary>
     private static double LineCountDecay(int lineCount)
     {
@@ -562,8 +563,8 @@ public sealed class FontBasedElementClassifier : IElementClassifier
     /// <summary>
     /// Returns <c>true</c> when a block begins with a list-label glyph
     /// (ASCII bullets, geometric shapes, circled numerals). Matches a
-    /// trimmed prefix of common bullet symbols; the full ODL set has ~1100
-    /// Unicode entries that may be added later if needed.
+    /// trimmed prefix of common bullet symbols; the table is intentionally
+    /// small and can be extended when new corpora demand it.
     /// </summary>
     private static bool IsBulleted(string text)
     {

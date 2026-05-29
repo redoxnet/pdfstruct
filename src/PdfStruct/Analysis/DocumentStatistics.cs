@@ -10,10 +10,11 @@ namespace PdfStruct.Analysis;
 /// frequency, median body size).
 /// </summary>
 /// <remarks>
-/// Ports the ODL <c>TextNodeStatistics</c> approach: rarity is positional
-/// rank among values strictly above the mode, not raw frequency. A value
-/// appearing once in the rare tail receives the same boost as one appearing
-/// many times if both occupy the same rank position.
+/// Rarity is positional rank among values strictly above the document mode,
+/// not raw frequency. A value appearing once in the rare tail receives the
+/// same boost as one appearing many times when both occupy the same rank
+/// position — what matters for heading detection is "how unusual is this
+/// size for this document," not how many times it happens to appear.
 /// </remarks>
 public sealed class DocumentStatistics
 {
@@ -84,9 +85,11 @@ public sealed class DocumentStatistics
 /// boosts to values that exceed the document mode.
 /// </summary>
 /// <remarks>
-/// Ports ODL's <c>ModeWeightStatistics</c>: <c>boost(value) = (rank + 1) / n</c>
-/// where <c>rank</c> is the value's position among rare values sorted
-/// ascending and <c>n</c> is the count of rare values.
+/// The rarity boost is <c>(rank + 1) / n</c> where <c>rank</c> is the value's
+/// position among rare values sorted ascending and <c>n</c> is the count of
+/// rare values. The largest rare value receives boost <c>1.0</c>; the
+/// smallest above-mode value receives <c>1/n</c>. Below-mode values receive
+/// <c>0</c>.
 /// </remarks>
 public sealed class RarityTable
 {

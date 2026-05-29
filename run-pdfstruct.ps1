@@ -2,7 +2,7 @@
 #
 # For each <name>.pdf, produces:
 #   <name>/<name>.md         - extracted markdown
-#   <name>/<name>.json       - extracted JSON (OpenDataLoader-compatible shape)
+#   <name>/<name>.json       - extracted JSON with per-element bounding boxes
 #   <name>/page-NNN.png      - debug image overlays
 #
 # Usage:

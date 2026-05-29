@@ -12,8 +12,7 @@ namespace PdfStruct.Analysis;
 /// extraction pipeline can filter them out of the main content stream.
 /// </summary>
 /// <remarks>
-/// Ports the OpenDataLoader-pdf <c>HeaderFooterProcessor</c> recipe:
-/// candidates are restricted to the top <see cref="HeaderBandTopRatio"/>
+/// Candidates are restricted to the top <see cref="HeaderBandTopRatio"/>
 /// or bottom <see cref="FooterBandBottomRatio"/> of their page, content is
 /// normalized so that varying digit runs (page numbers, dates) still match
 /// across pages, and groups appearing on at least
@@ -24,9 +23,9 @@ public static partial class RunningFurnitureDetector
 {
     /// <summary>
     /// Header candidates must have their bottom edge above this ratio of
-    /// page height (default <c>0.75</c> — element lies in the top 25% of
-    /// the page). Tighter than ODL's <c>2/3</c> band to avoid pulling body
-    /// paragraphs into the candidate set.
+    /// page height (default <c>0.25</c> — element lies in the top 25% of
+    /// the page). The narrow band keeps body paragraphs out of the
+    /// candidate set even on short pages.
     /// </summary>
     public const double HeaderBandTopRatio = 0.25;
 

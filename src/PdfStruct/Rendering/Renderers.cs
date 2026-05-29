@@ -127,7 +127,8 @@ public sealed class MarkdownRenderer : IDocumentRenderer
 }
 
 /// <summary>
-/// Renders a <see cref="Models.PdfDocument"/> to JSON compatible with OpenDataLoader PDF's schema.
+/// Renders a <see cref="Models.PdfDocument"/> to a JSON tree of
+/// bounding-box-annotated content elements.
 /// </summary>
 public sealed class JsonRenderer : IDocumentRenderer
 {
