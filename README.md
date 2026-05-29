@@ -192,4 +192,13 @@ dotnet format PdfStruct.sln --verify-no-changes --no-restore
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[Apache License 2.0](LICENSE), with one exception: the heading-probability
+signal-weight constants in
+[`src/PdfStruct/Analysis/FontBasedElementClassifier.cs`](src/PdfStruct/Analysis/FontBasedElementClassifier.cs)
+are derived from
+[veraPDF wcag algorithms](https://github.com/veraPDF/verapdf-wcag-algorithms),
+which is dual-licensed under GPLv3+ / MPLv2+. Those portions are taken
+under the Mozilla Public License 2.0, so that file is itself made
+available under MPL-2.0 in addition to Apache-2.0. Downstream consumers
+may use that file under either licence. See [`NOTICE`](NOTICE) for full
+attribution.

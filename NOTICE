@@ -1,0 +1,27 @@
+PdfStruct
+Copyright (c) 2026 Jong Hyun Kim
+
+This product is primarily licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+----
+
+The file src/PdfStruct/Analysis/FontBasedElementClassifier.cs contains
+portions derived from the veraPDF wcag algorithms project
+(https://github.com/veraPDF/verapdf-wcag-algorithms), specifically the
+heading-probability signal-weight constants and the multiplicative
+line-count decay coefficient sourced from
+org.verapdf.wcag.algorithms.semanticalgorithms.utils.NodeUtils.
+
+  Copyright (c) 2015-2026, veraPDF Consortium <info@verapdf.org>
+
+veraPDF wcag algorithms is dual-licensed at the recipient's choice under
+either the GNU General Public License v3.0+ or the Mozilla Public
+License 2.0. The derived portions in this product are used under the
+Mozilla Public License 2.0 (MPL-2.0):
+
+    http://mozilla.org/MPL/2.0/
+
+The file containing those portions is itself made available under
+MPL-2.0 in addition to Apache-2.0; downstream consumers may pick either
+license for that file. The rest of the project remains under Apache-2.0.

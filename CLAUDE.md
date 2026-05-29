@@ -8,6 +8,10 @@ PdfStruct is a .NET library and CLI for **RAG-optimized structured extraction** 
 
 The C# / .NET ecosystem currently has no equivalent — PdfStruct is the gap-filler.
 
+## Licensing
+
+Apache-2.0 overall, with one exception: `src/PdfStruct/Analysis/FontBasedElementClassifier.cs` carries derived numeric constants from veraPDF wcag algorithms (dual-licensed GPLv3+ / MPLv2+, taken under MPL-2.0) and is therefore dual-licensed Apache-2.0 / MPL-2.0. Any new code that incorporates additional veraPDF-derived material must keep the same per-file MPL marking and update `NOTICE` accordingly. All other algorithmic work in this repo is derived independently from public specifications, the PdfPig source (Apache-2.0), or first-principles experimentation against the local fixture set — do not introduce additional copyleft-derived material without flagging it.
+
 ## Layout
 
 ```

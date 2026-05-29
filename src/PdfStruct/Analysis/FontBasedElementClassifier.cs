@@ -1,5 +1,18 @@
 // Copyright (c) Jong Hyun Kim. All rights reserved.
-// Licensed under the Apache License, Version 2.0.
+//
+// This file is dual-licensed: it is available under the Apache License,
+// Version 2.0 (the primary licence of this project) AND under the
+// Mozilla Public License 2.0. Downstream consumers may use this file
+// under either licence.
+//
+// Portions of this file (the heading-probability signal-weight constants
+// and the line-count decay coefficient) are derived from the veraPDF
+// wcag algorithms project,
+// https://github.com/veraPDF/verapdf-wcag-algorithms,
+// Copyright (c) 2015-2026 veraPDF Consortium <info@verapdf.org>,
+// dual-licensed at the recipient's choice under GPLv3+ or MPLv2+.
+// The derived portions are taken under MPL-2.0; see NOTICE at the
+// repository root and http://mozilla.org/MPL/2.0/ for the licence text.
 
 using PdfStruct.Models;
 
@@ -118,14 +131,20 @@ public interface IElementClassifier
 /// </remarks>
 public sealed class FontBasedElementClassifier : IElementClassifier
 {
+    // The signal-weight constants below and the line-count decay coefficient
+    // are taken from veraPDF wcag algorithms' NodeUtils.HEADING_PROBABILITY_PARAMS
+    // array (positions [3], [2], [0], [6], [7], [2], [1] respectively). See
+    // this file's header and the repository NOTICE file for licence terms.
     private const double InitialHeadingBoost = 0.27;
     private const double StandaloneBoost = 0.15;
     private const double CenterAlignedBoost = 0.30;
     private const double VerticalGapBoost = 0.20;
     private const double VerticalGapThresholdRatio = 0.5;
     private const double AllCapsBoost = 0.15;
+    // Not from veraPDF — tuned against this project's fixture set.
     private const double NextPagePenalty = -0.50;
     private const double SentenceFlowDemotionMultiplier = 0.30;
+    // veraPDF NodeUtils.HEADING_PROBABILITY_PARAMS[1].
     private const double LineDecayCoefficient = 0.0291;
 
     private readonly double _headingProbabilityThreshold;
