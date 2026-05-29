@@ -258,7 +258,7 @@ public sealed class PdfStructParser
             pair => pair.Key,
             pair => (IReadOnlyList<TextLineBlock>)pair.Value.ToList());
 
-        var pageLists = DetectListsPerPage(pageLines);
+        var pageLists = DetectListsPerPage(pageLines, pageCuts);
 
         if (pageLists.Count > 0)
             ApplyConservativeReconciliation(pageLines, originalPageLines, pageLists);
@@ -486,18 +486,75 @@ public sealed class PdfStructParser
     /// lists are absent from the returned dictionary.
     /// </summary>
     private static Dictionary<int, IReadOnlyList<DetectedList>> DetectListsPerPage(
-        Dictionary<int, IReadOnlyList<TextLineBlock>> pageLines)
+        Dictionary<int, IReadOnlyList<TextLineBlock>> pageLines,
+        Dictionary<int, (IReadOnlyList<PdfRectangle> Vertical, IReadOnlyList<PdfRectangle> Horizontal)> pageCuts)
     {
         var result = new Dictionary<int, IReadOnlyList<DetectedList>>();
         foreach (var page in pageLines.Keys.ToList())
         {
-            var detection = ListDetector.Detect(pageLines[page]);
-            if (detection.Lists.Count == 0) continue;
+            var verticalCuts = pageCuts.TryGetValue(page, out var cuts) ? cuts.Vertical : [];
+            var (lists, residual) = DetectListsOnPage(pageLines[page], verticalCuts);
+            if (lists.Count == 0) continue;
 
-            result[page] = detection.Lists;
-            pageLines[page] = detection.ResidualLines;
+            result[page] = lists;
+            pageLines[page] = residual;
         }
         return result;
+    }
+
+    /// <summary>
+    /// Runs <see cref="ListDetector.Detect"/> column-locally on a single page:
+    /// when vertical structural cuts exist, lines are partitioned into column
+    /// slabs by horizontal centre against the cut centres, and each slab's
+    /// line stream is detected independently. The independent runs prevent a
+    /// list from absorbing lines that share its Y range but live in a
+    /// different column — the canonical regression is the references-cited
+    /// block on a US patent face page, where left-column patent
+    /// classification codes and right-column bibliographic references on the
+    /// same baseline would otherwise merge into one list item with
+    /// interleaved content.
+    /// </summary>
+    /// <param name="pageLines">All lines on the page in extraction order.</param>
+    /// <param name="verticalCuts">Vertical structural cuts for the page (may be empty).</param>
+    /// <returns>Merged detected lists across columns plus residual lines.</returns>
+    private static (IReadOnlyList<DetectedList> Lists, IReadOnlyList<TextLineBlock> Residual) DetectListsOnPage(
+        IReadOnlyList<TextLineBlock> pageLines,
+        IReadOnlyList<PdfRectangle> verticalCuts)
+    {
+        if (verticalCuts.Count == 0)
+        {
+            var single = ListDetector.Detect(pageLines);
+            return (single.Lists, single.ResidualLines);
+        }
+
+        var boundaries = verticalCuts
+            .Select(c => (c.Left + c.Right) / 2.0)
+            .OrderBy(x => x)
+            .ToList();
+
+        var columnGroups = new List<List<TextLineBlock>>(boundaries.Count + 1);
+        for (var i = 0; i < boundaries.Count + 1; i++)
+            columnGroups.Add(new List<TextLineBlock>());
+
+        foreach (var line in pageLines)
+        {
+            var center = (line.Left + line.Right) / 2.0;
+            var col = 0;
+            while (col < boundaries.Count && center > boundaries[col]) col++;
+            columnGroups[col].Add(line);
+        }
+
+        var mergedLists = new List<DetectedList>();
+        var mergedResidual = new List<TextLineBlock>();
+        foreach (var group in columnGroups)
+        {
+            if (group.Count == 0) continue;
+            var detection = ListDetector.Detect(group);
+            mergedLists.AddRange(detection.Lists);
+            mergedResidual.AddRange(detection.ResidualLines);
+        }
+
+        return (mergedLists, mergedResidual);
     }
 
     /// <summary>
@@ -1203,6 +1260,8 @@ public sealed class PdfStructParser
         var whitespaces = PdfPigWhitespaceCover.GetWhitespaces(
             words,
             images: GetLayoutObstacleImages(page),
+            minWidth: 3.0,
+            minHeight: 5.0,
             maxRectangleCount: 200);
 
         var vertical = DeduplicateByCenter(

@@ -104,7 +104,12 @@ internal static class BenchSegmenterCommand
                     : 0.0;
 
                 var whitespaces = words.Count > 0
-                    ? WhitespaceCoverExtractor.GetWhitespaces(words, images: PdfStructParser.GetLayoutObstacleImages(page))
+                    ? WhitespaceCoverExtractor.GetWhitespaces(
+                        words,
+                        images: PdfStructParser.GetLayoutObstacleImages(page),
+                        minWidth: 3.0,
+                        minHeight: 5.0,
+                        maxRectangleCount: 200)
                     : Array.Empty<PdfRectangle>();
                 var oursBlocks = oursRowsByPage.TryGetValue(p, out var rows)
                     ? (IReadOnlyList<PdfStructTextBlock>)rows.Select(r => r.Block).ToList()
