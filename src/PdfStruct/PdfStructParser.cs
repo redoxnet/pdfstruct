@@ -1262,12 +1262,14 @@ public sealed class PdfStructParser
             images: GetLayoutObstacleImages(page),
             minWidth: 3.0,
             minHeight: 5.0,
-            maxRectangleCount: 200);
+            maxRectangleCount: 500);
 
+        var verticalCandidates = whitespaces
+            .Where(ws => StructuralCutClassifier.IsVerticalCutCandidate(ws, page.Width, page.Height))
+            .ToList();
+        var verticalAfterPairing = StructuralCutClassifier.EnforceNarrowPairing(verticalCandidates);
         var vertical = DeduplicateByCenter(
-            whitespaces
-                .Where(ws => StructuralCutClassifier.IsVerticalCutCandidate(ws, page.Width, page.Height))
-                .OrderBy(ws => (ws.Left + ws.Right) / 2.0),
+            verticalAfterPairing.OrderBy(ws => (ws.Left + ws.Right) / 2.0),
             ws => (ws.Left + ws.Right) / 2.0,
             minSeparation: 5.0);
 

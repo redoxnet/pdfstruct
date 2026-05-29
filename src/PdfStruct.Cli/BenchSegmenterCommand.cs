@@ -116,9 +116,10 @@ internal static class BenchSegmenterCommand
                     : [];
 
                 var wordBoxes = words.Select(w => w.BoundingBox).ToList();
-                var verticalCuts = whitespaces
+                var verticalCandidates = whitespaces
                     .Where(ws => StructuralCutClassifier.IsVerticalCutCandidate(ws, page.Width, page.Height))
                     .ToList();
+                var verticalCuts = StructuralCutClassifier.EnforceNarrowPairing(verticalCandidates);
                 var horizontalCuts = whitespaces
                     .Where(ws => StructuralCutClassifier.IsHorizontalCutCandidate(ws, page.Width, page.Height))
                     .Where(ws => StructuralCutClassifier.IsCleanHorizontalGap(ws, wordBoxes))
