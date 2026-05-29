@@ -1,7 +1,7 @@
 # ADR 0002 - ONNX-assisted layout role detection spike
 
 > **Status:** Draft / spike approved, implementation decision pending
-> **Repository:** [diluculo/pdfstruct](https://github.com/diluculo/pdfstruct)
+> **Repository:** [redoxnet/pdfstruct](https://github.com/redoxnet/pdfstruct)
 > **Goal:** Evaluate whether a local ONNX layout-role detector can improve PdfStruct by separating semantic role detection from reading-order reconstruction.
 
 ---
@@ -381,7 +381,7 @@ Suggested measurements:
 
 ## Appendix B - References
 
-- PdfStruct repo: https://github.com/diluculo/pdfstruct
+- PdfStruct repo: https://github.com/redoxnet/pdfstruct
 - PP-DocLayout paper: https://arxiv.org/abs/2503.17213
 - PP-DocLayout-S model card: https://huggingface.co/PaddlePaddle/PP-DocLayout-S
 - ONNX Runtime C# documentation: https://onnxruntime.ai/docs/get-started/with-csharp.html
