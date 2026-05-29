@@ -10,7 +10,9 @@ The C# / .NET ecosystem currently has no equivalent — PdfStruct is the gap-fil
 
 ## Licensing
 
-Apache-2.0 overall, with one exception: `src/PdfStruct/Analysis/FontBasedElementClassifier.cs` carries derived numeric constants from veraPDF wcag algorithms (dual-licensed GPLv3+ / MPLv2+, taken under MPL-2.0) and is therefore dual-licensed Apache-2.0 / MPL-2.0. Any new code that incorporates additional veraPDF-derived material must keep the same per-file MPL marking and update `NOTICE` accordingly. All other algorithmic work in this repo is derived independently from public specifications, the PdfPig source (Apache-2.0), or first-principles experimentation against the local fixture set — do not introduce additional copyleft-derived material without flagging it.
+Apache-2.0 overall, with one exception: `src/PdfStruct/Analysis/FontBasedElementClassifier.cs` carries derived numeric constants from veraPDF wcag algorithms (dual-licensed GPLv3+ / MPLv2+, taken under MPL-2.0) and is therefore dual-licensed Apache-2.0 / MPL-2.0.
+
+Referencing veraPDF-derived material is fine — it is a normal source in this domain (OpenDataLoader-pdf draws on it too), and we have already deliberately accepted MPL-2.0 on the file above. Strict clean-room re-derivation is *not* required. When new code incorporates such material: always elect veraPDF's **MPL-2.0** option (never GPLv3+, which would be viral across the whole library), confine it to its own file so the weak-copyleft obligation stays file-scoped, carry the same per-file MPL dual-licence header as `FontBasedElementClassifier.cs`, and update `NOTICE`. Keep the MPL footprint small where that is easy — deriving from public specs, the PdfPig source (Apache-2.0), or first-principles experimentation stays MPL-free for free — but do not contort the design or spend effort purely to avoid MPL.
 
 ## Layout
 
