@@ -46,6 +46,14 @@ public sealed class PdfStructOptions
     /// <summary>Gets or sets the image format ("png" or "jpeg"). Default: "png".</summary>
     public string ImageFormat { get; set; } = "png";
 
+    /// <summary>
+    /// Gets or sets the directory that extracted image files are written to when
+    /// <see cref="ImageOutput"/> is <see cref="ImageOutputMode.External"/>. When
+    /// <c>null</c>, external mode emits image elements without a file (structure
+    /// and bounding box only). Ignored for <see cref="ImageOutputMode.Embedded"/>.
+    /// </summary>
+    public string? ImageOutputDirectory { get; set; }
+
     /// <summary>Gets or sets whether to use Tagged PDF structure tree when available. Default: true.</summary>
     public bool UseStructTree { get; set; } = true;
 

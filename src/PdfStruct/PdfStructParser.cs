@@ -76,6 +76,7 @@ public sealed class PdfStructParser
     private readonly ILayoutAnalyzer _layoutAnalyzer;
     private readonly IElementClassifier _classifier;
     private readonly ICodeDecoder? _codeDecoder;
+    private readonly IImageRasterizer? _imageRasterizer;
 
     /// <summary>Initializes with default options.</summary>
     public PdfStructParser() : this(new PdfStructOptions()) { }
@@ -90,13 +91,15 @@ public sealed class PdfStructParser
     /// </summary>
     /// <param name="options">The extraction options.</param>
     /// <param name="codeDecoder">Optional decoder that promotes QR codes and barcodes to coded images; <c>null</c> leaves every image a plain figure.</param>
-    public PdfStructParser(PdfStructOptions options, ICodeDecoder? codeDecoder = null)
+    /// <param name="imageRasterizer">Optional rasteriser used to persist image pixels by cropping the rendered page; <c>null</c> falls back to PdfPig byte export only.</param>
+    public PdfStructParser(PdfStructOptions options, ICodeDecoder? codeDecoder = null, IImageRasterizer? imageRasterizer = null)
     {
         _options = options;
         _layoutAnalyzer = new XyCutLayoutAnalyzer(options.MinGapRatioX, options.MinGapRatioY);
         _classifier = new CompositeElementClassifier(
             new FontBasedElementClassifier(options.HeadingProbabilityThreshold));
         _codeDecoder = codeDecoder;
+        _imageRasterizer = imageRasterizer;
     }
 
     /// <summary>Initializes with custom analyzer and classifier.</summary>
@@ -104,13 +107,15 @@ public sealed class PdfStructParser
     /// <param name="layoutAnalyzer">The reading-order analyzer.</param>
     /// <param name="classifier">The element classifier.</param>
     /// <param name="codeDecoder">Optional decoder that promotes QR codes and barcodes to coded images; <c>null</c> leaves every image a plain figure.</param>
+    /// <param name="imageRasterizer">Optional rasteriser used to persist image pixels by cropping the rendered page; <c>null</c> falls back to PdfPig byte export only.</param>
     public PdfStructParser(
-        PdfStructOptions options, ILayoutAnalyzer layoutAnalyzer, IElementClassifier classifier, ICodeDecoder? codeDecoder = null)
+        PdfStructOptions options, ILayoutAnalyzer layoutAnalyzer, IElementClassifier classifier, ICodeDecoder? codeDecoder = null, IImageRasterizer? imageRasterizer = null)
     {
         _options = options;
         _layoutAnalyzer = layoutAnalyzer;
         _classifier = classifier;
         _codeDecoder = codeDecoder;
+        _imageRasterizer = imageRasterizer;
     }
 
     /// <summary>Parses a PDF file by path.</summary>
@@ -353,7 +358,7 @@ public sealed class PdfStructParser
             ReplaceListPlaceholders(doc.Kids, pageLists, originalPageLines);
 
         if (pageImages.Count > 0)
-            ReplaceImagePlaceholders(doc.Kids, pageImages);
+            ReplaceImagePlaceholders(doc.Kids, pageImages, Path.GetFileNameWithoutExtension(fileName), pdfBytes, pageGeometries);
 
         TemplateClassConsistency.PromoteSharedTemplates(doc.Kids);
 
@@ -847,9 +852,12 @@ public sealed class PdfStructParser
     /// <see cref="Models.HeadingElement"/> are handled because the classifier
     /// may resolve the sentinel block into either type.
     /// </summary>
-    private static void ReplaceImagePlaceholders(
+    private void ReplaceImagePlaceholders(
         List<Models.ContentElement> kids,
-        Dictionary<int, IReadOnlyList<DetectedImage>> pageImages)
+        Dictionary<int, IReadOnlyList<DetectedImage>> pageImages,
+        string fileBase,
+        byte[]? pdfBytes,
+        IReadOnlyDictionary<int, PageGeometry> pageGeometries)
     {
         for (var i = 0; i < kids.Count; i++)
         {
@@ -872,7 +880,7 @@ public sealed class PdfStructParser
             if (indexOnPage < 0 || indexOnPage >= images.Count) continue;
 
             var detected = images[indexOnPage];
-            kids[i] = new Models.ImageElement
+            var image = new Models.ImageElement
             {
                 Id = element.Id,
                 PageNumber = pageNumber,
@@ -882,7 +890,77 @@ public sealed class PdfStructParser
                 DecodedText = detected.DecodedText,
                 AltSource = detected.AltSource,
             };
+            pageGeometries.TryGetValue(pageNumber, out var geometry);
+            PersistImage(image, detected, pageNumber, indexOnPage, fileBase, pdfBytes, geometry);
+            kids[i] = image;
         }
+    }
+
+    /// <summary>
+    /// Persists a raster image's bytes onto the element according to
+    /// <see cref="PdfStructOptions.ImageOutput"/>: embeds a Base64 PNG data URI,
+    /// or writes a PNG file under
+    /// <see cref="PdfStructOptions.ImageOutputDirectory"/> and records a relative
+    /// source path. Vector-synthesised codes (no source bitmap) and images PdfPig
+    /// cannot export to PNG are left without bytes. The emitted bytes are the
+    /// source bitmap; the element's bounding box stays the on-page placement,
+    /// which may differ in scale.
+    /// </summary>
+    private void PersistImage(Models.ImageElement image, DetectedImage detected, int pageNumber, int indexOnPage, string fileBase, byte[]? pdfBytes, PageGeometry geometry)
+    {
+        if (_options.ImageOutput == ImageOutputMode.Off) return;
+
+        var png = ExtractImagePng(image, detected, pageNumber, pdfBytes, geometry);
+        if (png is null || png.Length == 0) return;
+
+        image.Format = "png";
+        if (_options.ImageOutput == ImageOutputMode.Embedded)
+        {
+            image.Data = "data:image/png;base64," + Convert.ToBase64String(png);
+            return;
+        }
+
+        var directory = _options.ImageOutputDirectory;
+        if (string.IsNullOrEmpty(directory)) return;
+
+        var fileName = $"{fileBase}_p{pageNumber}_{indexOnPage}.png";
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(Path.Combine(directory, fileName), png);
+            image.Source = fileName;
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Obtains PNG bytes for an image: first PdfPig's direct export (cheap, but
+    /// unsupported for many filters), then — when an
+    /// <see cref="IImageRasterizer"/> is available — a crop of the rendered page
+    /// at the element's placement box, which works for any filter and yields the
+    /// visible region rather than the raw source bitmap. Returns <c>null</c> when
+    /// neither path produces bytes.
+    /// </summary>
+    private byte[]? ExtractImagePng(Models.ImageElement image, DetectedImage detected, int pageNumber, byte[]? pdfBytes, PageGeometry geometry)
+    {
+        if (detected.Source is not null)
+        {
+            try
+            {
+                if (detected.Source.TryGetPng(out var direct) && direct is { Length: > 0 })
+                    return direct;
+            }
+            catch
+            {
+                // Fall through to the rasterised crop.
+            }
+        }
+
+        if (_imageRasterizer is not null && pdfBytes is not null && geometry.Width > 0 && geometry.Height > 0)
+            return _imageRasterizer.RenderRegionPng(pdfBytes, pageNumber, image.BoundingBox, geometry.Width, geometry.Height);
+
+        return null;
     }
 
     /// <summary>

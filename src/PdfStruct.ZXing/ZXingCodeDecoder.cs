@@ -1,10 +1,9 @@
 // Copyright (c) Jong Hyun Kim. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
-using Docnet.Core;
-using Docnet.Core.Models;
 using PdfStruct.Analysis;
 using PdfStruct.Models;
+using PdfStruct.Rendering;
 using UglyToad.PdfPig.Content;
 using ZXing;
 using ZXing.Common;
@@ -18,17 +17,14 @@ namespace PdfStruct.ZXing;
 /// <remarks>
 /// Codes are frequently drawn as vector graphics or stored in image filters
 /// PdfPig cannot export, so reading the extracted image XObjects misses them.
-/// Instead the page is rendered to pixels with Docnet.Core (PDFium) and scanned
-/// whole by ZXing; each result's pixel position is mapped back to PDF space so
-/// <see cref="MachineReadableCodeDetector"/> can tag the matching raster image
-/// or synthesise a code element for a vector-drawn code. Decoding is therefore
-/// gated behind the caller's image-output option, as it renders every page.
+/// Instead the page is rendered to pixels through a shared
+/// <see cref="IPageRasterizer"/> and scanned whole by ZXing; each result's pixel
+/// position is mapped back to PDF space so <see cref="MachineReadableCodeDetector"/>
+/// can tag the matching raster image or synthesise a code element for a
+/// vector-drawn code.
 /// </remarks>
 public sealed class ZXingCodeDecoder : ICodeDecoder
 {
-    /// <summary>Render scale (page points → pixels). ~3× ≈ 216 DPI, enough to resolve small QR modules and barcode bars.</summary>
-    private const double RenderScale = 3.0;
-
     /// <summary>Minimum emitted code dimension in PDF points, so a 1-D barcode (whose decoder returns two collinear endpoints) gets a usable box.</summary>
     private const double MinCodeDimension = 6.0;
 
@@ -47,6 +43,8 @@ public sealed class ZXingCodeDecoder : ICodeDecoder
         BarcodeFormat.CODE_93,
     ];
 
+    private readonly IPageRasterizer _rasterizer;
+
     private readonly BarcodeReaderGeneric _reader = new()
     {
         AutoRotate = true,
@@ -57,35 +55,28 @@ public sealed class ZXingCodeDecoder : ICodeDecoder
         },
     };
 
+    /// <summary>Initializes the decoder with a default PDFium-backed rasteriser.</summary>
+    public ZXingCodeDecoder() : this(new PdfPageRenderer()) { }
+
+    /// <summary>Initializes the decoder with a shared page rasteriser.</summary>
+    /// <param name="rasterizer">The rasteriser used to render pages for scanning.</param>
+    public ZXingCodeDecoder(IPageRasterizer rasterizer) => _rasterizer = rasterizer;
+
     /// <inheritdoc />
     public IReadOnlyList<DecodedCode> Decode(byte[] pdfBytes, int pageNumber, Page page)
     {
         ArgumentNullException.ThrowIfNull(pdfBytes);
         ArgumentNullException.ThrowIfNull(page);
-        if (pdfBytes.Length == 0 || page.Width <= 0 || page.Height <= 0) return [];
+        if (page.Width <= 0 || page.Height <= 0) return [];
 
-        byte[] pixels;
-        int width, height;
-        try
-        {
-            using var docReader = DocLib.Instance.GetDocReader(pdfBytes, new PageDimensions(RenderScale));
-            using var pageReader = docReader.GetPageReader(pageNumber - 1);
-            width = pageReader.GetPageWidth();
-            height = pageReader.GetPageHeight();
-            pixels = pageReader.GetImage();
-        }
-        catch
-        {
-            return [];
-        }
+        var raster = _rasterizer.Render(pdfBytes, pageNumber);
+        if (raster is null) return [];
 
-        if (width <= 0 || height <= 0 || pixels.Length < (long)width * height * 4) return [];
-
-        var results = _reader.DecodeMultiple(pixels, width, height, RGBLuminanceSource.BitmapFormat.BGRA32);
+        var results = _reader.DecodeMultiple(raster.Bgra, raster.Width, raster.Height, RGBLuminanceSource.BitmapFormat.BGRA32);
         if (results is null || results.Length == 0) return [];
 
-        var scaleX = width / page.Width;
-        var scaleY = height / page.Height;
+        var scaleX = raster.Width / page.Width;
+        var scaleY = raster.Height / page.Height;
 
         var codes = new List<DecodedCode>(results.Length);
         foreach (var result in results)

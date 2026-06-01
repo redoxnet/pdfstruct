@@ -18,6 +18,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PdfStruct.Tests", "src\PdfS
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PdfStruct.ZXing", "src\PdfStruct.ZXing\PdfStruct.ZXing.csproj", "{6E81A0CB-B7CA-4F40-B78C-15107FCF4DAD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PdfStruct.Rendering", "src\PdfStruct.Rendering\PdfStruct.Rendering.csproj", "{2D844E0C-6BA4-4724-84CC-7189667EFF50}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,6 +42,10 @@ Global
 		{6E81A0CB-B7CA-4F40-B78C-15107FCF4DAD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6E81A0CB-B7CA-4F40-B78C-15107FCF4DAD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6E81A0CB-B7CA-4F40-B78C-15107FCF4DAD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2D844E0C-6BA4-4724-84CC-7189667EFF50}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2D844E0C-6BA4-4724-84CC-7189667EFF50}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2D844E0C-6BA4-4724-84CC-7189667EFF50}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2D844E0C-6BA4-4724-84CC-7189667EFF50}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -49,5 +55,6 @@ Global
 		{61730ABA-7C55-47EC-81C3-806EF26C32C0} = {06DA95C8-A25E-4DA2-BBB4-A767898D3DB7}
 		{AA36F272-7115-4FD8-A4E6-C8EE412C088F} = {06DA95C8-A25E-4DA2-BBB4-A767898D3DB7}
 		{6E81A0CB-B7CA-4F40-B78C-15107FCF4DAD} = {06DA95C8-A25E-4DA2-BBB4-A767898D3DB7}
+		{2D844E0C-6BA4-4724-84CC-7189667EFF50} = {06DA95C8-A25E-4DA2-BBB4-A767898D3DB7}
 	EndGlobalSection
 EndGlobal

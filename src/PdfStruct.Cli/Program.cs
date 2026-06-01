@@ -79,11 +79,21 @@ internal static class App
             SanitizeText = options.SanitizeText,
             ImageOutput = options.ImageOutput
         };
-        // When images are surfaced, decode any QR codes and barcodes among them.
-        var codeDecoder = options.ImageOutput != ImageOutputMode.Off
-            ? new PdfStruct.ZXing.ZXingCodeDecoder()
+        // External images are written next to the output file (or the working
+        // directory when writing to stdout).
+        if (options.ImageOutput == ImageOutputMode.External)
+        {
+            parserOptions.ImageOutputDirectory = options.OutputPath is { } outPath
+                ? Path.GetDirectoryName(Path.GetFullPath(outPath))
+                : Directory.GetCurrentDirectory();
+        }
+        // When images are surfaced, share one page rasteriser between code
+        // decoding and image-region extraction so each page renders once.
+        var renderer = options.ImageOutput != ImageOutputMode.Off
+            ? new PdfStruct.Rendering.PdfPageRenderer()
             : null;
-        var parser = new PdfStructParser(parserOptions, codeDecoder);
+        var codeDecoder = renderer is not null ? new PdfStruct.ZXing.ZXingCodeDecoder(renderer) : null;
+        var parser = new PdfStructParser(parserOptions, codeDecoder, renderer);
 
         var result = parser.Parse(options.InputPath);
         var content = format == OutputKind.Json
