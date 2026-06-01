@@ -75,6 +75,7 @@ public sealed class PdfStructParser
     private readonly PdfStructOptions _options;
     private readonly ILayoutAnalyzer _layoutAnalyzer;
     private readonly IElementClassifier _classifier;
+    private readonly ICodeDecoder? _codeDecoder;
 
     /// <summary>Initializes with default options.</summary>
     public PdfStructParser() : this(new PdfStructOptions()) { }
@@ -87,21 +88,29 @@ public sealed class PdfStructParser
     /// <see cref="RegexHeadingClassifier"/> in front of the font model) use
     /// the constructor that accepts a custom classifier instance.
     /// </summary>
-    public PdfStructParser(PdfStructOptions options)
+    /// <param name="options">The extraction options.</param>
+    /// <param name="codeDecoder">Optional decoder that promotes QR codes and barcodes to coded images; <c>null</c> leaves every image a plain figure.</param>
+    public PdfStructParser(PdfStructOptions options, ICodeDecoder? codeDecoder = null)
     {
         _options = options;
         _layoutAnalyzer = new XyCutLayoutAnalyzer(options.MinGapRatioX, options.MinGapRatioY);
         _classifier = new CompositeElementClassifier(
             new FontBasedElementClassifier(options.HeadingProbabilityThreshold));
+        _codeDecoder = codeDecoder;
     }
 
     /// <summary>Initializes with custom analyzer and classifier.</summary>
+    /// <param name="options">The extraction options.</param>
+    /// <param name="layoutAnalyzer">The reading-order analyzer.</param>
+    /// <param name="classifier">The element classifier.</param>
+    /// <param name="codeDecoder">Optional decoder that promotes QR codes and barcodes to coded images; <c>null</c> leaves every image a plain figure.</param>
     public PdfStructParser(
-        PdfStructOptions options, ILayoutAnalyzer layoutAnalyzer, IElementClassifier classifier)
+        PdfStructOptions options, ILayoutAnalyzer layoutAnalyzer, IElementClassifier classifier, ICodeDecoder? codeDecoder = null)
     {
         _options = options;
         _layoutAnalyzer = layoutAnalyzer;
         _classifier = classifier;
+        _codeDecoder = codeDecoder;
     }
 
     /// <summary>Parses a PDF file by path.</summary>
@@ -242,6 +251,8 @@ public sealed class PdfStructParser
         var pageGeometries = new Dictionary<int, PageGeometry>(pdf.NumberOfPages);
         var pageHeights = new Dictionary<int, double>(pdf.NumberOfPages);
         var pageCuts = new Dictionary<int, (IReadOnlyList<PdfRectangle> Vertical, IReadOnlyList<PdfRectangle> Horizontal)>(pdf.NumberOfPages);
+        var pageImages = new Dictionary<int, IReadOnlyList<DetectedImage>>(pdf.NumberOfPages);
+        var extractImages = _options.ImageOutput != ImageOutputMode.Off;
         for (var p = 1; p <= pdf.NumberOfPages; p++)
         {
             var page = pdf.GetPage(p);
@@ -249,6 +260,11 @@ public sealed class PdfStructParser
             pageHeights[p] = page.Height;
             pageCuts[p] = DetectStructuralCuts(page, _options.FilterHiddenText);
             pageLines[p] = ExtractPageTextLines(page, pageCuts[p].Vertical);
+            if (extractImages)
+            {
+                var detected = ImageContentDetector.DetectContentImages(page);
+                pageImages[p] = _codeDecoder is not null ? _codeDecoder.Decode(page, detected) : detected;
+            }
         }
 
         if (_options.ExcludeHeadersFooters)
@@ -270,17 +286,29 @@ public sealed class PdfStructParser
             PageGeometry? pageGeometry = _options.ExcludeHeadersFooters ? pageGeometries[p] : null;
             var blocks = BuildPageBlocks(pageLines[p], pageGeometry, pageCuts[p].Vertical, pageCuts[p].Horizontal);
 
-            if (pageLists.TryGetValue(p, out var listsOnPage))
+            var hasLists = pageLists.TryGetValue(p, out var listsOnPage) && listsOnPage.Count > 0;
+            var hasImages = pageImages.TryGetValue(p, out var imagesOnPage) && imagesOnPage.Count > 0;
+            if (hasLists || hasImages)
             {
-                foreach (var list in listsOnPage)
-                    foreach (var item in list.Items)
-                        statsOnlyBlocks.Add(new DocumentTextBlock(
-                            p, SynthesizeListItemStatsBlock(list, item), IsStatsOnly: true));
-
-                var augmented = new List<TextBlock>(blocks.Count + listsOnPage.Count);
+                var extra = (hasLists ? listsOnPage!.Count : 0) + (hasImages ? imagesOnPage!.Count : 0);
+                var augmented = new List<TextBlock>(blocks.Count + extra);
                 augmented.AddRange(blocks);
-                for (var i = 0; i < listsOnPage.Count; i++)
-                    augmented.Add(MakeListPlaceholder(listsOnPage[i], p, i));
+
+                if (hasLists)
+                {
+                    foreach (var list in listsOnPage!)
+                        foreach (var item in list.Items)
+                            statsOnlyBlocks.Add(new DocumentTextBlock(
+                                p, SynthesizeListItemStatsBlock(list, item), IsStatsOnly: true));
+
+                    for (var i = 0; i < listsOnPage!.Count; i++)
+                        augmented.Add(MakeListPlaceholder(listsOnPage[i], p, i));
+                }
+
+                if (hasImages)
+                    for (var i = 0; i < imagesOnPage!.Count; i++)
+                        augmented.Add(MakeImagePlaceholder(imagesOnPage[i], p, i));
+
                 var ordered = _layoutAnalyzer.DetermineReadingOrder(augmented);
                 blocks = WithStandaloneFlag(ordered);
             }
@@ -305,6 +333,9 @@ public sealed class PdfStructParser
 
         if (pageLists.Count > 0)
             ReplaceListPlaceholders(doc.Kids, pageLists, originalPageLines);
+
+        if (pageImages.Count > 0)
+            ReplaceImagePlaceholders(doc.Kids, pageImages);
 
         TemplateClassConsistency.PromoteSharedTemplates(doc.Kids);
 
@@ -754,6 +785,83 @@ public sealed class PdfStructParser
             if (!originalPageLines.TryGetValue(pageNumber, out var pageLines)) continue;
 
             kids[i] = BuildListElement(lists[indexOnPage], pageNumber, element.Id, pageLines);
+        }
+    }
+
+    /// <summary>Sentinel prefix marking an image placeholder block that flows through reading-order analysis and is resolved back to an <see cref="Models.ImageElement"/> by <see cref="ReplaceImagePlaceholders"/>.</summary>
+    private const string ImagePlaceholderPrefix = "PDFSTRUCT_IMAGE_PLACEHOLDER";
+
+    /// <summary>
+    /// Builds a sentinel <see cref="TextBlock"/> standing in for a content
+    /// image during reading-order analysis, mirroring
+    /// <see cref="MakeListPlaceholder"/>. The font size is zero so the block is
+    /// excluded from typographic statistics (which count only positive sizes),
+    /// and the marker text encodes the page-and-index pair for resolution after
+    /// classification.
+    /// </summary>
+    private static TextBlock MakeImagePlaceholder(DetectedImage image, int pageNumber, int indexOnPage)
+    {
+        var marker = $"{ImagePlaceholderPrefix}{pageNumber}{indexOnPage}";
+        var bbox = image.BoundingBox;
+        return new TextBlock(
+            bbox,
+            marker,
+            FontName: string.Empty,
+            FontSize: 0.0,
+            IsBold: false,
+            LineCount: 1,
+            FirstLineLeft: bbox.Left,
+            MedianLineLeft: bbox.Left,
+            LastLineLeft: bbox.Left,
+            FirstLineRight: bbox.Right,
+            MedianLineRight: bbox.Right,
+            LastLineRight: bbox.Right) with
+        { IsStandalone = false };
+    }
+
+    /// <summary>
+    /// Walks the document's element list and replaces every image placeholder
+    /// (recognised by sentinel text content) with the corresponding
+    /// <see cref="Models.ImageElement"/>, preserving the element ID assigned in
+    /// reading order. Both <see cref="Models.ParagraphElement"/> and
+    /// <see cref="Models.HeadingElement"/> are handled because the classifier
+    /// may resolve the sentinel block into either type.
+    /// </summary>
+    private static void ReplaceImagePlaceholders(
+        List<Models.ContentElement> kids,
+        Dictionary<int, IReadOnlyList<DetectedImage>> pageImages)
+    {
+        for (var i = 0; i < kids.Count; i++)
+        {
+            var element = kids[i];
+            var content = element switch
+            {
+                Models.ParagraphElement p => p.Text.Content,
+                Models.HeadingElement h => h.Text.Content,
+                _ => null
+            };
+            if (content is null) continue;
+            if (!content.StartsWith(ImagePlaceholderPrefix, StringComparison.Ordinal)) continue;
+
+            var rest = content[ImagePlaceholderPrefix.Length..];
+            var sep = rest.IndexOf('');
+            if (sep < 0) continue;
+            if (!int.TryParse(rest.AsSpan(0, sep), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var pageNumber)) continue;
+            if (!int.TryParse(rest.AsSpan(sep + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var indexOnPage)) continue;
+            if (!pageImages.TryGetValue(pageNumber, out var images)) continue;
+            if (indexOnPage < 0 || indexOnPage >= images.Count) continue;
+
+            var detected = images[indexOnPage];
+            kids[i] = new Models.ImageElement
+            {
+                Id = element.Id,
+                PageNumber = pageNumber,
+                BoundingBox = detected.BoundingBox,
+                Role = detected.Role,
+                CodeType = detected.CodeType,
+                DecodedText = detected.DecodedText,
+                AltSource = detected.AltSource,
+            };
         }
     }
 

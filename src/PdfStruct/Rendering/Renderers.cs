@@ -58,7 +58,7 @@ public sealed class MarkdownRenderer : IDocumentRenderer
                 break;
 
             case ImageElement img:
-                sb.AppendLine(img.Source is not null ? $"![image]({img.Source})" : "[Image]");
+                sb.AppendLine(RenderImageMarkdown(img));
                 break;
 
             case CaptionElement cap:
@@ -120,9 +120,30 @@ public sealed class MarkdownRenderer : IDocumentRenderer
                 sb.Append("    *").Append(c.Text.Content).AppendLine("*");
                 break;
             case ImageElement img:
-                sb.Append("    ").AppendLine(img.Source is not null ? $"![image]({img.Source})" : "[Image]");
+                sb.Append("    ").AppendLine(RenderImageMarkdown(img));
                 break;
         }
+    }
+
+    /// <summary>
+    /// Renders an image to its Markdown form. Machine-readable codes render as
+    /// a labelled placeholder carrying the decoded value (the payload is what
+    /// matters for retrieval, not the glyph); ordinary figures render as an
+    /// image link when a source path is present, or a bare placeholder.
+    /// </summary>
+    private static string RenderImageMarkdown(ImageElement img)
+    {
+        var label = img.Role switch
+        {
+            "qr-code" => "QR code",
+            "barcode" => "Barcode",
+            _ => null
+        };
+
+        if (label is not null)
+            return img.DecodedText is { Length: > 0 } text ? $"[{label}: {text}]" : $"[{label}]";
+
+        return img.Source is not null ? $"![image]({img.Source})" : "[Image]";
     }
 }
 
@@ -221,9 +242,13 @@ public sealed class JsonRenderer : IDocumentRenderer
                 }).ToList();
                 break;
             case ImageElement img:
+                dict["role"] = img.Role;
                 if (img.Source is not null) dict["source"] = img.Source;
                 if (img.Data is not null) dict["data"] = img.Data;
                 dict["format"] = img.Format;
+                if (img.CodeType is not null) dict["code type"] = img.CodeType;
+                if (img.DecodedText is not null) dict["decoded text"] = img.DecodedText;
+                if (img.AltSource is not null) dict["alt source"] = img.AltSource;
                 break;
             case CaptionElement cap:
                 AddText(dict, cap.Text);

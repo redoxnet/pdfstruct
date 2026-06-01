@@ -185,7 +185,7 @@ public sealed class ListItem
     public List<ContentElement> Kids { get; set; } = [];
 }
 
-/// <summary>An image element.</summary>
+/// <summary>An image element. Stays <c>type: "image"</c> even for machine-readable codes; the <see cref="Role"/> discriminates a plain figure from a QR code or barcode.</summary>
 public sealed class ImageElement : ContentElement
 {
     /// <inheritdoc />
@@ -199,6 +199,22 @@ public sealed class ImageElement : ContentElement
 
     /// <summary>Gets or sets the image format ("png" or "jpeg").</summary>
     public string Format { get; set; } = "png";
+
+    /// <summary>
+    /// Gets or sets the semantic role of the image: <c>"figure"</c> (default)
+    /// for ordinary pictures, or <c>"qr-code"</c> / <c>"barcode"</c> for
+    /// machine-readable codes. Codes are not caption targets.
+    /// </summary>
+    public string Role { get; set; } = "figure";
+
+    /// <summary>Gets or sets the specific code symbology when <see cref="Role"/> is a code (e.g. <c>"qr-code"</c>, <c>"code-128"</c>, <c>"code-39"</c>); <c>null</c> for a figure.</summary>
+    public string? CodeType { get; set; }
+
+    /// <summary>Gets or sets the decoded payload of a machine-readable code; <c>null</c> when not a code or decoding failed.</summary>
+    public string? DecodedText { get; set; }
+
+    /// <summary>Gets or sets the provenance of any associated text: <c>"original"</c> (from the PDF), <c>"machine-decoded"</c> (from a code decoder), or <c>"missing"</c>.</summary>
+    public string? AltSource { get; set; }
 }
 
 /// <summary>A caption element linked to a table, image, or other content.</summary>

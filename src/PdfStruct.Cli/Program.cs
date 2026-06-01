@@ -76,7 +76,8 @@ internal static class App
         {
             Format = format == OutputKind.Json ? OutputFormat.Json : OutputFormat.Markdown,
             ExcludeHeadersFooters = !options.IncludeRunningHeaders,
-            SanitizeText = options.SanitizeText
+            SanitizeText = options.SanitizeText,
+            ImageOutput = options.ImageOutput
         });
 
         var result = parser.Parse(options.InputPath);
@@ -238,6 +239,7 @@ internal static class App
         writer.WriteLine("      --format <format>     Output format: markdown, json. Default: markdown, or inferred from -o.");
         writer.WriteLine("      --debug-image <dir>   Write per-page PNG overlays with extracted element bounding boxes.");
         writer.WriteLine("      --debug-lines         Include pre-paragraph text-line boxes in --debug-image overlays.");
+        writer.WriteLine("      --images <mode>       Surface embedded images as content: off (default), embedded, external.");
         writer.WriteLine("      --include-running-headers");
         writer.WriteLine("                            Keep detected running headers, footers, and page furniture.");
         writer.WriteLine("      --sanitize            Mask common sensitive values in extracted text.");
@@ -282,6 +284,9 @@ internal sealed class ExtractOptions
 
     /// <summary><c>true</c> when sensitive text should be masked in the extracted output.</summary>
     public bool SanitizeText { get; private set; }
+
+    /// <summary>How embedded images should be surfaced: off (default), embedded, or external.</summary>
+    public ImageOutputMode ImageOutput { get; private set; } = ImageOutputMode.Off;
 
     /// <summary><c>true</c> when the parsed arguments only request that help be displayed.</summary>
     public bool ShowHelp { get; private set; }
@@ -333,6 +338,10 @@ internal sealed class ExtractOptions
 
                 case "--sanitize":
                     options.SanitizeText = true;
+                    break;
+
+                case "--images":
+                    options.ImageOutput = ParseImageMode(ReadValue(args, ref index, arg));
                     break;
 
                 default:
@@ -404,6 +413,16 @@ internal sealed class ExtractOptions
         index++;
         return args[index];
     }
+
+    /// <summary>Parses an <c>--images</c> value into an <see cref="ImageOutputMode"/>.</summary>
+    /// <exception cref="CliException">Thrown when the value is not a recognized mode.</exception>
+    private static ImageOutputMode ParseImageMode(string value) => value.ToLowerInvariant() switch
+    {
+        "off" => ImageOutputMode.Off,
+        "embedded" => ImageOutputMode.Embedded,
+        "external" => ImageOutputMode.External,
+        _ => throw new CliException($"Unknown --images mode: {value}. Use off, embedded, or external.")
+    };
 }
 
 /// <summary>Parsed options for the <c>diagnose</c> command.</summary>
