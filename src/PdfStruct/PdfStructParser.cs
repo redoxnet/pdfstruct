@@ -826,18 +826,24 @@ public sealed class PdfStructParser
     /// <summary>
     /// Removes lines that look like running headers, footers, or vertical
     /// side furniture from the per-page line stream. Header and footer
-    /// candidates are rejected only when their normalised text appears in
-    /// the same band-and-x-position bucket on a configurable fraction of
-    /// pages, which keeps a centred document title from being dropped
-    /// alongside a recurring page header that shares its text. Side
-    /// furniture (narrow, tall margin glyph runs) is rejected
-    /// unconditionally — a single occurrence is enough.
+    /// candidates are grouped by a position-and-style signature — same
+    /// normalised text, horizontal bucket, vertical band bucket, and font
+    /// size bucket — and a group is rejected when it satisfies any of the
+    /// signals in <see cref="RunningFurnitureDetector.IsRepeatingFurniture"/>:
+    /// broad page coverage, a page-number sequence, or an exact repeat on
+    /// adjacent / alternating pages. Folding font size and vertical position
+    /// into the signature keeps a centred document title from being dropped
+    /// alongside a recurring page header that shares its text, while the
+    /// sequence and adjacency signals catch numbered footers and two-page or
+    /// even/odd layouts that broad coverage alone misses. Side furniture
+    /// (narrow, tall margin glyph runs) is rejected unconditionally — a
+    /// single occurrence is enough.
     /// </summary>
     private static Dictionary<int, IReadOnlyList<TextLineBlock>> FilterRunningFurnitureLines(
         IReadOnlyDictionary<int, IReadOnlyList<TextLineBlock>> pageLines,
         IReadOnlyDictionary<int, PageGeometry> pageGeometries)
     {
-        if (pageLines.Count < 3) return pageLines.ToDictionary(pair => pair.Key, pair => pair.Value);
+        if (pageLines.Count < 2) return pageLines.ToDictionary(pair => pair.Key, pair => pair.Value);
 
         var candidates = new List<RunningLineCandidate>();
         foreach (var (pageNumber, lines) in pageLines)
@@ -847,28 +853,31 @@ public sealed class PdfStructParser
 
             for (var index = 0; index < lines.Count; index++)
             {
-                var band = ClassifyRunningFurnitureBand(lines[index].BoundingBox, pageGeometry);
+                var line = lines[index];
+                var band = ClassifyRunningFurnitureBand(line.BoundingBox, pageGeometry);
                 if (band is null) continue;
 
-                var normalized = NormalizeRunningFurnitureText(lines[index].Text);
+                var normalized = RunningFurnitureDetector.Normalize(line.Text);
                 if (string.IsNullOrWhiteSpace(normalized)) continue;
 
-                var quantisedLeft = Math.Round(lines[index].BoundingBox.Left / 10.0) * 10.0;
-                candidates.Add(new RunningLineCandidate(pageNumber, index, band.Value, normalized, quantisedLeft));
+                candidates.Add(new RunningLineCandidate(
+                    pageNumber,
+                    index,
+                    band.Value,
+                    line.Text.Trim(),
+                    normalized,
+                    RunningFurnitureDetector.LeftBucket(line.BoundingBox.Left),
+                    RunningFurnitureDetector.TopBucket(line.BoundingBox.Top, pageGeometry.Height),
+                    RunningFurnitureDetector.FontSizeBucket(line.FontSize)));
             }
         }
 
-        var repeatedHeaderFooter = candidates
-            .Where(candidate => candidate.Band is not RunningFurnitureBand.Side);
-
-        var minPagesForRepeat = Math.Max(2, (int)Math.Ceiling(pageLines.Count * RunningFurnitureDetector.RepeatRatioThreshold));
-        // Group by position too (quantised to 10pt buckets) — two lines that share
-        // text content but appear at very different lefts are not the same running
-        // element. Without this, a centred document title is removed alongside a
-        // recurring page header that happens to share the same text.
-        var rejected = repeatedHeaderFooter
-            .GroupBy(candidate => (candidate.Band, candidate.NormalizedText, candidate.QuantisedLeft))
-            .Where(group => group.Select(candidate => candidate.PageNumber).Distinct().Count() >= minPagesForRepeat)
+        var rejected = candidates
+            .Where(candidate => candidate.Band is not RunningFurnitureBand.Side)
+            .GroupBy(candidate => (candidate.Band, candidate.NormalizedText, candidate.LeftBucket, candidate.TopBucket, candidate.FontSizeBucket))
+            .Where(group => RunningFurnitureDetector.IsRepeatingFurniture(
+                group.Select(candidate => (candidate.PageNumber, candidate.RawText)).ToList(),
+                pageLines.Count))
             .SelectMany(group => group.Select(candidate => (candidate.PageNumber, candidate.LineIndex)))
             .ToHashSet();
 
@@ -942,19 +951,6 @@ public sealed class PdfStructParser
         Math.Max(16.0, Math.Min(28.0, pageGeometry.Width * 0.08));
 
     /// <summary>
-    /// Normalises a candidate header/footer line for repeat-detection
-    /// matching by collapsing digit runs to <c>#</c> and folding internal
-    /// whitespace to a single space. Page numbers and date stamps that
-    /// vary across pages still match each other after the digit-run mask.
-    /// </summary>
-    private static string NormalizeRunningFurnitureText(string text)
-    {
-        var normalized = s_digitRun.Replace(text.Trim(), "#");
-        normalized = s_whitespace.Replace(normalized, " ");
-        return normalized;
-    }
-
-    /// <summary>
     /// Converts a PDF date string in the form
     /// <c>D:YYYYMMDDHHmmSS[+|-]HH'mm'</c> (or its truncated variants) to an
     /// ISO 8601 representation like <c>2026-04-30T11:30:09+09:00</c>. Returns
@@ -973,7 +969,7 @@ public sealed class PdfStructParser
         var s = raw.Trim();
         if (s.StartsWith("D:", StringComparison.Ordinal)) s = s[2..];
 
-        var match = System.Text.RegularExpressions.Regex.Match(
+        var match = Regex.Match(
             s,
             @"^(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?(?:([+\-Z])(\d{2})?(?:'(\d{2})'?)?)?$");
         if (!match.Success) return raw;
@@ -1915,19 +1911,19 @@ public sealed class PdfStructParser
         return fontName[7..];
     }
 
-    private static readonly Regex s_digitRun = new(@"\d+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex s_whitespace = new(@"\s+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     /// <summary>Width and height of a PDF page in user-space points, used by the running-furniture geometry checks.</summary>
     private readonly record struct PageGeometry(double Width, double Height);
 
-    /// <summary>One line under consideration as a running-furniture candidate, paired with its band classification, normalised text, and quantised left edge for repeat detection.</summary>
+    /// <summary>One line under consideration as a running-furniture candidate, paired with its band classification and the position-and-style signature (normalised text plus horizontal, vertical, and font-size buckets) used for repeat detection.</summary>
     private readonly record struct RunningLineCandidate(
         int PageNumber,
         int LineIndex,
         RunningFurnitureBand Band,
+        string RawText,
         string NormalizedText,
-        double QuantisedLeft);
+        long LeftBucket,
+        long TopBucket,
+        long FontSizeBucket);
 
     /// <summary>Page band that a running-furniture candidate occupies: top header, bottom footer, or vertical side margin.</summary>
     private enum RunningFurnitureBand { Header, Footer, Side }
