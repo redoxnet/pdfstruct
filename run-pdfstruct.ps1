@@ -11,6 +11,7 @@
 #   .\Run-PdfStruct.ps1 -Cli D:\custom\pdfstruct.cli.exe
 #   .\Run-PdfStruct.ps1 -DebugLines          # include pre-paragraph line boxes in overlays
 #   .\Run-PdfStruct.ps1 -IncludeRunningHeaders
+#   .\Run-PdfStruct.ps1 -Images              # surface images and decode QR/barcodes (--images external)
 #   .\Run-PdfStruct.ps1 -Clean                # wipe existing per-PDF output dirs first
 
 [CmdletBinding()]
@@ -19,6 +20,7 @@ param(
     [string] $Cli  = (Join-Path $PSScriptRoot 'src\PdfStruct.Cli\bin\Debug\net8.0\pdfstruct.cli.exe'),
     [switch] $DebugLines,
     [switch] $IncludeRunningHeaders,
+    [switch] $Images,
     [switch] $Clean
 )
 
@@ -65,6 +67,7 @@ foreach ($pdf in $pdfs) {
     $mdArgs = @('extract', $pdf.FullName, '--output', $mdPath, '--debug-image', $outputDir)
     if ($DebugLines)            { $mdArgs += '--debug-lines' }
     if ($IncludeRunningHeaders) { $mdArgs += '--include-running-headers' }
+    if ($Images)                { $mdArgs += @('--images', 'external') }
 
     $output   = & $Cli @mdArgs 2>&1
     $exitCode = $LASTEXITCODE
@@ -76,6 +79,7 @@ foreach ($pdf in $pdfs) {
         # roughly doubled but each output is unambiguous.
         $jsonArgs = @('extract', $pdf.FullName, '--output', $jsonPath, '--format', 'json')
         if ($IncludeRunningHeaders) { $jsonArgs += '--include-running-headers' }
+        if ($Images)                { $jsonArgs += @('--images', 'external') }
 
         $jsonOutput   = & $Cli @jsonArgs 2>&1
         $jsonExitCode = $LASTEXITCODE
