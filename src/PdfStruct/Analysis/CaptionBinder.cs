@@ -68,13 +68,13 @@ public static partial class CaptionBinder
             usedTarget.Add(pair.TargetIndex);
             usedCandidate.Add(pair.CandidateIndex);
 
-            var paragraph = (ParagraphElement)kids[pair.CandidateIndex];
+            var candidate = kids[pair.CandidateIndex];
             kids[pair.CandidateIndex] = new CaptionElement
             {
-                Id = paragraph.Id,
-                PageNumber = paragraph.PageNumber,
-                BoundingBox = paragraph.BoundingBox,
-                Text = paragraph.Text,
+                Id = candidate.Id,
+                PageNumber = candidate.PageNumber,
+                BoundingBox = candidate.BoundingBox,
+                Text = CandidateText(candidate)!,
                 LinkedContentId = kids[pair.TargetIndex].Id,
             };
         }
@@ -87,8 +87,15 @@ public static partial class CaptionBinder
         if (candidateIndex < 0 || candidateIndex >= kids.Count) return;
 
         var target = kids[targetIndex];
-        if (kids[candidateIndex] is not ParagraphElement candidate) return;
-        if (candidate.PageNumber != target.PageNumber) return;
+        var text = CandidateText(kids[candidateIndex]);
+        if (text is null) return;
+        if (kids[candidateIndex].PageNumber != target.PageNumber) return;
+
+        // Only paragraphs are open candidates. A heading qualifies only when it
+        // carries an explicit caption label (e.g. "Fig 1.", "Table 2", "도 5A"),
+        // never on geometry alone — that keeps section titles out.
+        var hasLabel = ExplicitCaptionLabel().IsMatch(text.Content);
+        if (kids[candidateIndex] is HeadingElement && !hasLabel) return;
 
         // A blocker between target and a distance-2 candidate severs the link.
         if (distance == 2)
@@ -97,19 +104,25 @@ public static partial class CaptionBinder
             if (between.PageNumber == target.PageNumber && IsBlocker(between)) return;
         }
 
-        var em = candidate.Text.FontSize > 0 ? candidate.Text.FontSize : bodyFontSize;
+        var em = text.FontSize > 0 ? text.FontSize : bodyFontSize;
         var targetBox = target.BoundingBox;
-        var candidateBox = candidate.BoundingBox;
+        var candidateBox = kids[candidateIndex].BoundingBox;
 
         var vertical = VerticalProximity(targetBox, candidateBox, em);
         if (vertical <= 0) return;
         var horizontal = HorizontalAlignment(targetBox, candidateBox);
         var adjacency = distance == 1 ? 1.0 : 0.6;
-        var shape = CandidateShape(candidate.Text.Content);
+
+        var shape = CandidateShape(text.Content);
+        // A labelled caption is caption-shaped however long it runs, but only
+        // when it also sits close to and aligned with the target — never floor a
+        // distant or misaligned paragraph just because it starts with a label.
+        if (hasLabel && horizontal >= 0.5)
+            shape = Math.Max(shape, 0.8);
 
         var score = vertical * horizontal * adjacency * shape;
 
-        var (boost, hasBoost) = ContentBoost(target, candidate, candidateBox, targetBox, bodyFontSize);
+        var (boost, hasBoost) = ContentBoost(target, candidateBox, targetBox, text, bodyFontSize, hasLabel);
         score += boost;
 
         if (score < WeakThreshold) return;
@@ -175,30 +188,27 @@ public static partial class CaptionBinder
         return 0.1;
     }
 
-    /// <summary>Returns the additive content boost and whether any boost signal was present (keyword, italic, or below-body font size), plus a small directional prior.</summary>
+    /// <summary>
+    /// Returns the additive content boost and whether a boost signal lets the
+    /// pairing bind in the weak band. Only an explicit caption label sets
+    /// <c>HasBoost</c>, so a paragraph below the strong threshold binds only when
+    /// it is genuinely labelled; a below-body font size and the directional prior
+    /// nudge the score but never, on their own, promote a borderline match.
+    /// </summary>
     private static (double Boost, bool HasBoost) ContentBoost(
-        ContentElement target, ParagraphElement candidate, BoundingBox candidateBox, BoundingBox targetBox, double bodyFontSize)
+        ContentElement target, BoundingBox candidateBox, BoundingBox targetBox, TextProperties text, double bodyFontSize, bool hasLabel)
     {
         var boost = 0.0;
-        var hasBoost = false;
 
-        if (CaptionKeyword().IsMatch(candidate.Text.Content))
-        {
-            boost += 0.15;
-            hasBoost = true;
-        }
-        if (candidate.Text is { } text && text.FontSize > 0 && text.FontSize < bodyFontSize * 0.95)
-        {
-            boost += 0.10;
-            hasBoost = true;
-        }
+        if (hasLabel) boost += 0.15;
+        if (text.FontSize > 0 && text.FontSize < bodyFontSize * 0.95) boost += 0.10;
 
         // Directional prior: tables are usually captioned above, figures below.
         var candidateAbove = candidateBox.Bottom >= targetBox.Top;
         if (target is TableElement && candidateAbove) boost += 0.05;
         else if (target is ImageElement && !candidateAbove) boost += 0.05;
 
-        return (boost, hasBoost);
+        return (boost, hasLabel);
     }
 
     /// <summary>Returns the median font size of paragraph elements, used as the body-text reference for proximity and boosts.</summary>
@@ -222,12 +232,23 @@ public static partial class CaptionBinder
         _ => false,
     };
 
+    /// <summary>Returns the text of a caption candidate — a paragraph or a heading — or <c>null</c> for any other element.</summary>
+    private static TextProperties? CandidateText(ContentElement element) => element switch
+    {
+        ParagraphElement p => p.Text,
+        HeadingElement h => h.Text,
+        _ => null,
+    };
+
     /// <summary>Elements that, sitting between a target and a distance-2 candidate, sever the caption link.</summary>
     private static bool IsBlocker(ContentElement element) =>
         element is HeadingElement or ListElement or TableElement or ImageElement or CaptionElement;
 
-    [GeneratedRegex(@"(?i)\b(fig(ure|\.)?|table|image|photo|chart)\b|그림|사진|도면|^\s*(도|표)\s*\d", RegexOptions.CultureInvariant)]
-    private static partial Regex CaptionKeyword();
+    // An explicit caption label leads the text and carries an identifier:
+    // "Figure 1", "Fig. 3", "FIG . 1", "Table 2", "그림 1", "도 5A", "도면1", "표 1".
+    // A bare section title ("Methods", "도면의 간단한 설명") never matches.
+    [GeneratedRegex(@"^\s*(?:fig(?:ure)?|table|그림|도면|도|표)\s*\.?\s*\d", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ExplicitCaptionLabel();
 
     private readonly record struct Pairing(int TargetIndex, int CandidateIndex, double Score, bool HasBoost);
 }
