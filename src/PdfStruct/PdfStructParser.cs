@@ -369,6 +369,8 @@ public sealed class PdfStructParser
 
         RenumberElements(doc.Kids);
 
+        CaptionBinder.Bind(doc.Kids);
+
         string? markdown = _options.Format.HasFlag(OutputFormat.Markdown)
             ? new MarkdownRenderer().Render(doc) : null;
         string? json = _options.Format.HasFlag(OutputFormat.Json)
