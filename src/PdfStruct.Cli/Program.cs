@@ -72,13 +72,18 @@ internal static class App
         }
 
         var format = options.ResolveFormat();
-        var parser = new PdfStructParser(new PdfStructOptions
+        var parserOptions = new PdfStructOptions
         {
             Format = format == OutputKind.Json ? OutputFormat.Json : OutputFormat.Markdown,
             ExcludeHeadersFooters = !options.IncludeRunningHeaders,
             SanitizeText = options.SanitizeText,
             ImageOutput = options.ImageOutput
-        });
+        };
+        // When images are surfaced, decode any QR codes and barcodes among them.
+        var codeDecoder = options.ImageOutput != ImageOutputMode.Off
+            ? new PdfStruct.ZXing.ZXingCodeDecoder()
+            : null;
+        var parser = new PdfStructParser(parserOptions, codeDecoder);
 
         var result = parser.Parse(options.InputPath);
         var content = format == OutputKind.Json

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>PdfStruct.ZXing</RootNamespace>
+
+    <!-- NuGet -->
+    <PackageId>PdfStruct.ZXing</PackageId>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>Jong Hyun Kim</Authors>
+    <Company>RedoxNet</Company>
+    <Copyright>Copyright (c) 2026 RedoxNet</Copyright>
+    <Description>ZXing.Net-backed code decoder for PdfStruct — recognises QR codes and barcodes (raster and vector-drawn) by rasterising the page, and promotes them to coded images. Optional adapter implementing PdfStruct's ICodeDecoder.</Description>
+    <PackageTags>pdf;qr-code;barcode;zxing;pdfstruct;decoding</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/redoxnet/pdfstruct</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/redoxnet/pdfstruct</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfStruct\PdfStruct.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Docnet.Core" />
+    <PackageReference Include="PdfPig" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="ZXing.Net" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfStruct.Tests" />
+  </ItemGroup>
+
+</Project>

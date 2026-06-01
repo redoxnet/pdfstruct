@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PdfStruct\PdfStruct.csproj" />
+    <ProjectReference Include="..\PdfStruct.ZXing\PdfStruct.ZXing.csproj" />
   </ItemGroup>
 
   <ItemGroup>

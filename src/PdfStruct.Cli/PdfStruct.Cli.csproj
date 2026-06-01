@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PdfStruct\PdfStruct.csproj" />
+    <ProjectReference Include="..\PdfStruct.ZXing\PdfStruct.ZXing.csproj" />
     <PackageReference Include="Docnet.Core" />
     <PackageReference Include="PdfPig" />
     <PackageReference Include="SkiaSharp" />

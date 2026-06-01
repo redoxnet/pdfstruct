@@ -120,22 +120,35 @@ public sealed class PdfStructParser
         if (!File.Exists(filePath))
             throw new FileNotFoundException("PDF file not found.", filePath);
 
-        using var pdf = UglyToad.PdfPig.PdfDocument.Open(filePath);
-        return ParseInternal(pdf, Path.GetFileName(filePath));
+        // Materialise bytes only when a code decoder needs them to rasterise pages.
+        var pdfBytes = _codeDecoder is not null ? File.ReadAllBytes(filePath) : null;
+        using var pdf = pdfBytes is not null
+            ? UglyToad.PdfPig.PdfDocument.Open(pdfBytes)
+            : UglyToad.PdfPig.PdfDocument.Open(filePath);
+        return ParseInternal(pdf, Path.GetFileName(filePath), pdfBytes);
     }
 
     /// <summary>Parses a PDF from a stream.</summary>
     public PdfStructResult Parse(Stream stream, string fileName = "document.pdf")
     {
-        using var pdf = UglyToad.PdfPig.PdfDocument.Open(stream);
-        return ParseInternal(pdf, fileName);
+        byte[]? pdfBytes = null;
+        if (_codeDecoder is not null)
+        {
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            pdfBytes = buffer.ToArray();
+        }
+        using var pdf = pdfBytes is not null
+            ? UglyToad.PdfPig.PdfDocument.Open(pdfBytes)
+            : UglyToad.PdfPig.PdfDocument.Open(stream);
+        return ParseInternal(pdf, fileName, pdfBytes);
     }
 
     /// <summary>Parses a PDF from a byte array.</summary>
     public PdfStructResult Parse(byte[] bytes, string fileName = "document.pdf")
     {
         using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes);
-        return ParseInternal(pdf, fileName);
+        return ParseInternal(pdf, fileName, _codeDecoder is not null ? bytes : null);
     }
 
     /// <summary>
@@ -234,7 +247,7 @@ public sealed class PdfStructParser
         return rows;
     }
 
-    private PdfStructResult ParseInternal(UglyToad.PdfPig.PdfDocument pdf, string fileName)
+    private PdfStructResult ParseInternal(UglyToad.PdfPig.PdfDocument pdf, string fileName, byte[]? pdfBytes = null)
     {
         var info = pdf.Information;
         var doc = new Models.PdfDocument
@@ -263,7 +276,12 @@ public sealed class PdfStructParser
             if (extractImages)
             {
                 var detected = ImageContentDetector.DetectContentImages(page);
-                pageImages[p] = _codeDecoder is not null ? _codeDecoder.Decode(page, detected) : detected;
+                if (_codeDecoder is not null && pdfBytes is not null)
+                {
+                    var codes = _codeDecoder.Decode(pdfBytes, p, page);
+                    detected = MachineReadableCodeDetector.Apply(detected, codes);
+                }
+                pageImages[p] = detected;
             }
         }
 
