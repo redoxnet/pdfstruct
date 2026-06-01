@@ -107,15 +107,17 @@ public static class ImageContentDetector
 /// <see cref="ICodeDecoder"/> fills in when the image is a machine-readable code.
 /// </summary>
 /// <param name="BoundingBox">The placement rectangle clamped to the crop box.</param>
-/// <param name="Source">The originating PdfPig image, or <c>null</c> for a vector-drawn code located by rasterising the page.</param>
-/// <param name="Role">The semantic role: <c>"unknown"</c> (default, an unclassified raster figure), <c>"qr-code"</c>, or <c>"barcode"</c>.</param>
+/// <param name="Source">The originating PdfPig image, or <c>null</c> for a vector figure or a vector-drawn code located by rasterising the page.</param>
+/// <param name="Role">The semantic role: <c>"unknown"</c> (default, an unclassified figure), <c>"qr-code"</c>, or <c>"barcode"</c>.</param>
 /// <param name="CodeType">The code symbology (e.g. <c>"qr-code"</c>, <c>"code-128"</c>) when this is a code; otherwise <c>null</c>.</param>
 /// <param name="DecodedText">The decoded code payload, or <c>null</c>.</param>
 /// <param name="AltSource">Provenance of any associated text: <c>"original"</c>, <c>"machine-decoded"</c>, or <c>"missing"</c>.</param>
+/// <param name="Representation">How the figure is carried in the PDF: <c>"raster"</c> (an image XObject, the default) or <c>"vector"</c> (a region of path graphics).</param>
 public readonly record struct DetectedImage(
     BoundingBox BoundingBox,
     IPdfImage? Source,
     string Role = "unknown",
     string? CodeType = null,
     string? DecodedText = null,
-    string? AltSource = null);
+    string? AltSource = null,
+    string Representation = "raster");

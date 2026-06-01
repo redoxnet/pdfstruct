@@ -125,8 +125,8 @@ public sealed class PdfStructParser
         if (!File.Exists(filePath))
             throw new FileNotFoundException("PDF file not found.", filePath);
 
-        // Materialise bytes only when a code decoder needs them to rasterise pages.
-        var pdfBytes = _codeDecoder is not null ? File.ReadAllBytes(filePath) : null;
+        // Materialise bytes when a code decoder or rasteriser needs them to render pages.
+        var pdfBytes = NeedsPageBytes ? File.ReadAllBytes(filePath) : null;
         using var pdf = pdfBytes is not null
             ? UglyToad.PdfPig.PdfDocument.Open(pdfBytes)
             : UglyToad.PdfPig.PdfDocument.Open(filePath);
@@ -137,7 +137,7 @@ public sealed class PdfStructParser
     public PdfStructResult Parse(Stream stream, string fileName = "document.pdf")
     {
         byte[]? pdfBytes = null;
-        if (_codeDecoder is not null)
+        if (NeedsPageBytes)
         {
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
@@ -153,8 +153,11 @@ public sealed class PdfStructParser
     public PdfStructResult Parse(byte[] bytes, string fileName = "document.pdf")
     {
         using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes);
-        return ParseInternal(pdf, fileName, _codeDecoder is not null ? bytes : null);
+        return ParseInternal(pdf, fileName, NeedsPageBytes ? bytes : null);
     }
+
+    /// <summary>Whether the parse needs the raw PDF bytes — for code decoding or for cropping rendered pages.</summary>
+    private bool NeedsPageBytes => _codeDecoder is not null || _imageRasterizer is not null;
 
     /// <summary>
     /// Runs the parser pipeline up to (but not through) classification and
@@ -270,6 +273,7 @@ public sealed class PdfStructParser
         var pageHeights = new Dictionary<int, double>(pdf.NumberOfPages);
         var pageCuts = new Dictionary<int, (IReadOnlyList<PdfRectangle> Vertical, IReadOnlyList<PdfRectangle> Horizontal)>(pdf.NumberOfPages);
         var pageImages = new Dictionary<int, IReadOnlyList<DetectedImage>>(pdf.NumberOfPages);
+        var pageVectorFigures = new Dictionary<int, List<DetectedImage>>(pdf.NumberOfPages);
         var extractImages = _options.ImageOutput != ImageOutputMode.Off;
         for (var p = 1; p <= pdf.NumberOfPages; p++)
         {
@@ -287,6 +291,18 @@ public sealed class PdfStructParser
                     detected = MachineReadableCodeDetector.Apply(detected, codes);
                 }
                 pageImages[p] = detected;
+                if (_options.DetectVectorFigures)
+                    pageVectorFigures[p] = [.. VectorFigureDetector.DetectContentVectorFigures(page, detected)];
+            }
+        }
+
+        if (pageVectorFigures.Count > 0)
+        {
+            VectorFigureDetector.SuppressRepeatingFigures(pageVectorFigures);
+            foreach (var (p, figures) in pageVectorFigures)
+            {
+                if (figures.Count == 0) continue;
+                pageImages[p] = [.. pageImages[p], .. figures];
             }
         }
 
@@ -886,7 +902,7 @@ public sealed class PdfStructParser
                 PageNumber = pageNumber,
                 BoundingBox = detected.BoundingBox,
                 Role = detected.Role,
-                Representation = "raster",
+                Representation = detected.Representation,
                 CodeType = detected.CodeType,
                 DecodedText = detected.DecodedText,
                 AltSource = detected.AltSource,

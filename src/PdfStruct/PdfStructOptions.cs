@@ -47,6 +47,14 @@ public sealed class PdfStructOptions
     public string ImageFormat { get; set; } = "png";
 
     /// <summary>
+    /// Gets or sets whether to detect regions of vector path graphics (charts,
+    /// flowcharts, diagrams) and emit them as vector <see cref="Models.FigureElement"/>s.
+    /// Has effect only when <see cref="ImageOutput"/> is not
+    /// <see cref="ImageOutputMode.Off"/>. Default: true.
+    /// </summary>
+    public bool DetectVectorFigures { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the directory that extracted image files are written to when
     /// <see cref="ImageOutput"/> is <see cref="ImageOutputMode.External"/>. When
     /// <c>null</c>, external mode emits image elements without a file (structure
