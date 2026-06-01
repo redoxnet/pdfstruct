@@ -173,6 +173,38 @@ public class CaptionBinderTests
         Assert.DoesNotContain(kids, e => e is CaptionElement);
     }
 
+    [Fact]
+    public void Bind_SourceLineBelowFigure_BecomesSourceNoteNotCaption()
+    {
+        var image = Img(1, new BoundingBox(100, 600, 300, 750));
+        var source = Para(2, new BoundingBox(100, 585, 300, 598), "자료: Google, LS증권 리서치센터");
+        var kids = new List<ContentElement> { image, source };
+
+        CaptionBinder.Bind(kids);
+
+        var note = Assert.IsType<SourceNoteElement>(kids[1]);
+        Assert.Equal(1, note.LinkedContentId);
+        Assert.DoesNotContain(kids, e => e is CaptionElement);
+    }
+
+    [Fact]
+    public void Bind_FigureWithCaptionAndSource_BindsBothKinds()
+    {
+        // Source credit above the figure, caption below it: one target carries
+        // one caption and one source note.
+        var source = Para(1, new BoundingBox(100, 755, 300, 768), "Source: World Bank, 2025.");
+        var image = Img(2, new BoundingBox(100, 600, 300, 750));
+        var caption = Para(3, new BoundingBox(100, 585, 300, 598), "Figure 4. Overall structure.");
+        var kids = new List<ContentElement> { source, image, caption };
+
+        CaptionBinder.Bind(kids);
+
+        Assert.IsType<SourceNoteElement>(kids[0]);
+        Assert.IsType<CaptionElement>(kids[2]);
+        Assert.Equal(2, ((SourceNoteElement)kids[0]).LinkedContentId);
+        Assert.Equal(2, ((CaptionElement)kids[2]).LinkedContentId);
+    }
+
     private static HeadingElement Head(int id, BoundingBox bbox, string content, double fontSize = 11.0) =>
         new()
         {
@@ -192,6 +224,6 @@ public class CaptionBinderTests
             Text = new TextProperties { Content = content, FontSize = fontSize },
         };
 
-    private static ImageElement Img(int id, BoundingBox bbox, string role = "figure") =>
+    private static FigureElement Img(int id, BoundingBox bbox, string role = "unknown") =>
         new() { Id = id, PageNumber = 1, BoundingBox = bbox, Role = role };
 }

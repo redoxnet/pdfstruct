@@ -58,25 +58,37 @@ public static partial class CaptionBinder
 
         DropAmbiguousCandidates(pairs);
 
-        var usedTarget = new HashSet<int>();
+        // A target may take one caption and one source note; a candidate binds once.
+        var usedTargetKind = new HashSet<(int Target, bool IsSource)>();
         var usedCandidate = new HashSet<int>();
         foreach (var pair in pairs.OrderByDescending(p => p.Score))
         {
-            if (usedTarget.Contains(pair.TargetIndex) || usedCandidate.Contains(pair.CandidateIndex)) continue;
+            if (usedCandidate.Contains(pair.CandidateIndex)) continue;
+            if (usedTargetKind.Contains((pair.TargetIndex, pair.IsSource))) continue;
             if (pair.Score < StrongThreshold && !(pair.Score >= WeakThreshold && pair.HasBoost)) continue;
 
-            usedTarget.Add(pair.TargetIndex);
+            usedTargetKind.Add((pair.TargetIndex, pair.IsSource));
             usedCandidate.Add(pair.CandidateIndex);
 
             var candidate = kids[pair.CandidateIndex];
-            kids[pair.CandidateIndex] = new CaptionElement
-            {
-                Id = candidate.Id,
-                PageNumber = candidate.PageNumber,
-                BoundingBox = candidate.BoundingBox,
-                Text = CandidateText(candidate)!,
-                LinkedContentId = kids[pair.TargetIndex].Id,
-            };
+            var linkedId = kids[pair.TargetIndex].Id;
+            kids[pair.CandidateIndex] = pair.IsSource
+                ? new SourceNoteElement
+                {
+                    Id = candidate.Id,
+                    PageNumber = candidate.PageNumber,
+                    BoundingBox = candidate.BoundingBox,
+                    Text = CandidateText(candidate)!,
+                    LinkedContentId = linkedId,
+                }
+                : new CaptionElement
+                {
+                    Id = candidate.Id,
+                    PageNumber = candidate.PageNumber,
+                    BoundingBox = candidate.BoundingBox,
+                    Text = CandidateText(candidate)!,
+                    LinkedContentId = linkedId,
+                };
         }
     }
 
@@ -95,6 +107,7 @@ public static partial class CaptionBinder
         // carries an explicit caption label (e.g. "Fig 1.", "Table 2", "도 5A"),
         // never on geometry alone — that keeps section titles out.
         var hasLabel = ExplicitCaptionLabel().IsMatch(text.Content);
+        var isSource = SourceNoteLabel().IsMatch(text.Content);
         if (kids[candidateIndex] is HeadingElement && !hasLabel) return;
 
         // A blocker between target and a distance-2 candidate severs the link.
@@ -126,7 +139,7 @@ public static partial class CaptionBinder
         score += boost;
 
         if (score < WeakThreshold) return;
-        pairs.Add(new Pairing(targetIndex, candidateIndex, score, hasBoost));
+        pairs.Add(new Pairing(targetIndex, candidateIndex, score, hasBoost, isSource));
     }
 
     /// <summary>Removes pairings for any candidate whose two best target scores are within <see cref="AmbiguityDelta"/> — it sits ambiguously between targets.</summary>
@@ -206,7 +219,7 @@ public static partial class CaptionBinder
         // Directional prior: tables are usually captioned above, figures below.
         var candidateAbove = candidateBox.Bottom >= targetBox.Top;
         if (target is TableElement && candidateAbove) boost += 0.05;
-        else if (target is ImageElement && !candidateAbove) boost += 0.05;
+        else if (target is FigureElement && !candidateAbove) boost += 0.05;
 
         return (boost, hasLabel);
     }
@@ -227,7 +240,7 @@ public static partial class CaptionBinder
     /// <summary>A figure (not a machine-readable code) or a table is a caption target.</summary>
     private static bool IsTarget(ContentElement element) => element switch
     {
-        ImageElement image => image.Role == "figure",
+        FigureElement figure => figure.Role is not ("qr-code" or "barcode"),
         TableElement => true,
         _ => false,
     };
@@ -242,7 +255,7 @@ public static partial class CaptionBinder
 
     /// <summary>Elements that, sitting between a target and a distance-2 candidate, sever the caption link.</summary>
     private static bool IsBlocker(ContentElement element) =>
-        element is HeadingElement or ListElement or TableElement or ImageElement or CaptionElement;
+        element is HeadingElement or ListElement or TableElement or FigureElement or CaptionElement or SourceNoteElement;
 
     // An explicit caption label leads the text and carries an identifier:
     // "Figure 1", "Fig. 3", "FIG . 1", "Table 2", "그림 1", "도 5A", "도면1", "표 1".
@@ -250,5 +263,9 @@ public static partial class CaptionBinder
     [GeneratedRegex(@"^\s*(?:fig(?:ure)?|table|그림|도면|도|표)\s*\.?\s*\d", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ExplicitCaptionLabel();
 
-    private readonly record struct Pairing(int TargetIndex, int CandidateIndex, double Score, bool HasBoost);
+    // A source-attribution line: "자료: …", "출처: …", "Source: …", "Data source: …".
+    [GeneratedRegex(@"^\s*(?:자료|출처|source|data source)\s*[:：]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SourceNoteLabel();
+
+    private readonly record struct Pairing(int TargetIndex, int CandidateIndex, double Score, bool HasBoost, bool IsSource);
 }

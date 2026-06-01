@@ -15,8 +15,9 @@ namespace PdfStruct.Models;
 [JsonDerivedType(typeof(HeadingElement), "heading")]
 [JsonDerivedType(typeof(TableElement), "table")]
 [JsonDerivedType(typeof(ListElement), "list")]
-[JsonDerivedType(typeof(ImageElement), "image")]
+[JsonDerivedType(typeof(FigureElement), "figure")]
 [JsonDerivedType(typeof(CaptionElement), "caption")]
+[JsonDerivedType(typeof(SourceNoteElement), "source note")]
 [JsonDerivedType(typeof(HeaderFooterElement), "header")]
 #endif
 public abstract class ContentElement
@@ -185,13 +186,32 @@ public sealed class ListItem
     public List<ContentElement> Kids { get; set; } = [];
 }
 
-/// <summary>An image element. Stays <c>type: "image"</c> even for machine-readable codes; the <see cref="Role"/> discriminates a plain figure from a QR code or barcode.</summary>
-public sealed class ImageElement : ContentElement
+/// <summary>
+/// A figure: any embedded picture, chart, diagram, or machine-readable code,
+/// regardless of whether it is stored as a raster bitmap or drawn as vector
+/// graphics. <see cref="Representation"/> records how it was carried in the PDF
+/// and <see cref="Role"/> its semantic kind.
+/// </summary>
+public sealed class FigureElement : ContentElement
 {
     /// <inheritdoc />
-    public override string Type => "image";
+    public override string Type => "figure";
 
-    /// <summary>Gets or sets the relative path to the extracted image.</summary>
+    /// <summary>
+    /// Gets or sets the semantic kind: <c>"chart"</c>, <c>"flowchart"</c>,
+    /// <c>"diagram"</c>, <c>"photo"</c>, <c>"screenshot"</c>, <c>"qr-code"</c>,
+    /// <c>"barcode"</c>, or <c>"unknown"</c>. Codes are not caption targets.
+    /// </summary>
+    public string Role { get; set; } = "unknown";
+
+    /// <summary>
+    /// Gets or sets how the figure is carried in the PDF: <c>"raster"</c> (an
+    /// image XObject), <c>"vector"</c> (path-drawn), <c>"mixed"</c>, or
+    /// <c>"rendered-crop"</c> (reconstructed by rasterising the page region).
+    /// </summary>
+    public string Representation { get; set; } = "raster";
+
+    /// <summary>Gets or sets the relative path to the extracted image file.</summary>
     public string? Source { get; set; }
 
     /// <summary>Gets or sets the Base64-encoded data URI.</summary>
@@ -200,14 +220,10 @@ public sealed class ImageElement : ContentElement
     /// <summary>Gets or sets the image format ("png" or "jpeg").</summary>
     public string Format { get; set; } = "png";
 
-    /// <summary>
-    /// Gets or sets the semantic role of the image: <c>"figure"</c> (default)
-    /// for ordinary pictures, or <c>"qr-code"</c> / <c>"barcode"</c> for
-    /// machine-readable codes. Codes are not caption targets.
-    /// </summary>
-    public string Role { get; set; } = "figure";
+    /// <summary>Gets or sets text drawn inside the figure (axis labels, node text, legends); <c>null</c> when none was captured.</summary>
+    public string? ExtractedText { get; set; }
 
-    /// <summary>Gets or sets the specific code symbology when <see cref="Role"/> is a code (e.g. <c>"qr-code"</c>, <c>"code-128"</c>, <c>"code-39"</c>); <c>null</c> for a figure.</summary>
+    /// <summary>Gets or sets the specific code symbology when <see cref="Role"/> is a code (e.g. <c>"qr-code"</c>, <c>"code-128"</c>, <c>"code-39"</c>); <c>null</c> otherwise.</summary>
     public string? CodeType { get; set; }
 
     /// <summary>Gets or sets the decoded payload of a machine-readable code; <c>null</c> when not a code or decoding failed.</summary>
@@ -222,6 +238,24 @@ public sealed class CaptionElement : ContentElement
 {
     /// <inheritdoc />
     public override string Type => "caption";
+
+    /// <summary>Gets or sets the text properties.</summary>
+    public TextProperties Text { get; set; } = new();
+
+    /// <summary>Gets or sets the linked content element ID.</summary>
+    public int? LinkedContentId { get; set; }
+}
+
+/// <summary>
+/// A source-attribution note linked to a figure or table — a line such as
+/// "자료: …", "출처: …", or "Source: …". Kept distinct from a
+/// <see cref="CaptionElement"/> so the caption text and the data-source credit
+/// are not conflated.
+/// </summary>
+public sealed class SourceNoteElement : ContentElement
+{
+    /// <inheritdoc />
+    public override string Type => "source note";
 
     /// <summary>Gets or sets the text properties.</summary>
     public TextProperties Text { get; set; } = new();

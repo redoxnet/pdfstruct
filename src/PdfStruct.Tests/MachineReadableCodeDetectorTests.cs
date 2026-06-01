@@ -30,7 +30,7 @@ public class MachineReadableCodeDetectorTests
         var result = MachineReadableCodeDetector.Apply(images, [code]);
 
         Assert.Equal(2, result.Count);
-        Assert.Equal("figure", result[0].Role);
+        Assert.Equal("unknown", result[0].Role);
         Assert.Equal("qr-code", result[1].Role);
         Assert.Equal("qr-code", result[1].CodeType);
         Assert.Equal("10-2312079", result[1].DecodedText);

@@ -57,12 +57,16 @@ public sealed class MarkdownRenderer : IDocumentRenderer
                 RenderList(l, sb);
                 break;
 
-            case ImageElement img:
-                sb.AppendLine(RenderImageMarkdown(img));
+            case FigureElement fig:
+                sb.AppendLine(RenderFigureMarkdown(fig));
                 break;
 
             case CaptionElement cap:
                 sb.Append('*').Append(cap.Text.Content).AppendLine("*");
+                break;
+
+            case SourceNoteElement note:
+                sb.Append('*').Append(note.Text.Content).AppendLine("*");
                 break;
         }
     }
@@ -119,21 +123,24 @@ public sealed class MarkdownRenderer : IDocumentRenderer
             case CaptionElement c:
                 sb.Append("    *").Append(c.Text.Content).AppendLine("*");
                 break;
-            case ImageElement img:
-                sb.Append("    ").AppendLine(RenderImageMarkdown(img));
+            case SourceNoteElement n:
+                sb.Append("    *").Append(n.Text.Content).AppendLine("*");
+                break;
+            case FigureElement fig:
+                sb.Append("    ").AppendLine(RenderFigureMarkdown(fig));
                 break;
         }
     }
 
     /// <summary>
-    /// Renders an image to its Markdown form. Machine-readable codes render as
+    /// Renders a figure to its Markdown form. Machine-readable codes render as
     /// a labelled placeholder carrying the decoded value (the payload is what
-    /// matters for retrieval, not the glyph); ordinary figures render as an
-    /// image link when a source path is present, or a bare placeholder.
+    /// matters for retrieval, not the glyph); other figures render as an image
+    /// link when a source path is present, or a bare placeholder.
     /// </summary>
-    private static string RenderImageMarkdown(ImageElement img)
+    private static string RenderFigureMarkdown(FigureElement fig)
     {
-        var label = img.Role switch
+        var label = fig.Role switch
         {
             "qr-code" => "QR code",
             "barcode" => "Barcode",
@@ -141,9 +148,9 @@ public sealed class MarkdownRenderer : IDocumentRenderer
         };
 
         if (label is not null)
-            return img.DecodedText is { Length: > 0 } text ? $"[{label}: {text}]" : $"[{label}]";
+            return fig.DecodedText is { Length: > 0 } text ? $"[{label}: {text}]" : $"[{label}]";
 
-        return img.Source is not null ? $"![image]({img.Source})" : "[Image]";
+        return fig.Source is not null ? $"![figure]({fig.Source})" : "[Figure]";
     }
 }
 
@@ -241,18 +248,24 @@ public sealed class JsonRenderer : IDocumentRenderer
                     return itemDict;
                 }).ToList();
                 break;
-            case ImageElement img:
-                dict["role"] = img.Role;
-                if (img.Source is not null) dict["source"] = img.Source;
-                if (img.Data is not null) dict["data"] = img.Data;
-                dict["format"] = img.Format;
-                if (img.CodeType is not null) dict["code type"] = img.CodeType;
-                if (img.DecodedText is not null) dict["decoded text"] = img.DecodedText;
-                if (img.AltSource is not null) dict["alt source"] = img.AltSource;
+            case FigureElement fig:
+                dict["role"] = fig.Role;
+                dict["representation"] = fig.Representation;
+                if (fig.Source is not null) dict["source"] = fig.Source;
+                if (fig.Data is not null) dict["data"] = fig.Data;
+                dict["format"] = fig.Format;
+                if (fig.ExtractedText is not null) dict["extracted text"] = fig.ExtractedText;
+                if (fig.CodeType is not null) dict["code type"] = fig.CodeType;
+                if (fig.DecodedText is not null) dict["decoded text"] = fig.DecodedText;
+                if (fig.AltSource is not null) dict["alt source"] = fig.AltSource;
                 break;
             case CaptionElement cap:
                 AddText(dict, cap.Text);
                 if (cap.LinkedContentId.HasValue) dict["linked content id"] = cap.LinkedContentId;
+                break;
+            case SourceNoteElement note:
+                AddText(dict, note.Text);
+                if (note.LinkedContentId.HasValue) dict["linked content id"] = note.LinkedContentId;
                 break;
         }
         return dict;

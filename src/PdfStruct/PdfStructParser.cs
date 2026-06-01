@@ -813,7 +813,7 @@ public sealed class PdfStructParser
         }
     }
 
-    /// <summary>Sentinel prefix marking an image placeholder block that flows through reading-order analysis and is resolved back to an <see cref="Models.ImageElement"/> by <see cref="ReplaceImagePlaceholders"/>.</summary>
+    /// <summary>Sentinel prefix marking an image placeholder block that flows through reading-order analysis and is resolved back to an <see cref="Models.FigureElement"/> by <see cref="ReplaceImagePlaceholders"/>.</summary>
     private const string ImagePlaceholderPrefix = "PDFSTRUCT_IMAGE_PLACEHOLDER";
 
     /// <summary>
@@ -847,7 +847,7 @@ public sealed class PdfStructParser
     /// <summary>
     /// Walks the document's element list and replaces every image placeholder
     /// (recognised by sentinel text content) with the corresponding
-    /// <see cref="Models.ImageElement"/>, preserving the element ID assigned in
+    /// <see cref="Models.FigureElement"/>, preserving the element ID assigned in
     /// reading order. Both <see cref="Models.ParagraphElement"/> and
     /// <see cref="Models.HeadingElement"/> are handled because the classifier
     /// may resolve the sentinel block into either type.
@@ -880,12 +880,13 @@ public sealed class PdfStructParser
             if (indexOnPage < 0 || indexOnPage >= images.Count) continue;
 
             var detected = images[indexOnPage];
-            var image = new Models.ImageElement
+            var image = new Models.FigureElement
             {
                 Id = element.Id,
                 PageNumber = pageNumber,
                 BoundingBox = detected.BoundingBox,
                 Role = detected.Role,
+                Representation = "raster",
                 CodeType = detected.CodeType,
                 DecodedText = detected.DecodedText,
                 AltSource = detected.AltSource,
@@ -906,7 +907,7 @@ public sealed class PdfStructParser
     /// source bitmap; the element's bounding box stays the on-page placement,
     /// which may differ in scale.
     /// </summary>
-    private void PersistImage(Models.ImageElement image, DetectedImage detected, int pageNumber, int indexOnPage, string fileBase, byte[]? pdfBytes, PageGeometry geometry)
+    private void PersistImage(Models.FigureElement image, DetectedImage detected, int pageNumber, int indexOnPage, string fileBase, byte[]? pdfBytes, PageGeometry geometry)
     {
         if (_options.ImageOutput == ImageOutputMode.Off) return;
 
@@ -942,7 +943,7 @@ public sealed class PdfStructParser
     /// visible region rather than the raw source bitmap. Returns <c>null</c> when
     /// neither path produces bytes.
     /// </summary>
-    private byte[]? ExtractImagePng(Models.ImageElement image, DetectedImage detected, int pageNumber, byte[]? pdfBytes, PageGeometry geometry)
+    private byte[]? ExtractImagePng(Models.FigureElement image, DetectedImage detected, int pageNumber, byte[]? pdfBytes, PageGeometry geometry)
     {
         if (detected.Source is not null)
         {

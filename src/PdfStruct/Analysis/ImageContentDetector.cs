@@ -9,7 +9,7 @@ namespace PdfStruct.Analysis;
 
 /// <summary>
 /// Selects the embedded images on a page that should surface as first-class
-/// <see cref="Models.ImageElement"/> content, and reconciles each one's
+/// <see cref="Models.FigureElement"/> content, and reconciles each one's
 /// placement rectangle with the visible page so the emitted bounding box is
 /// citation-grounded.
 /// </summary>
@@ -108,14 +108,14 @@ public static class ImageContentDetector
 /// </summary>
 /// <param name="BoundingBox">The placement rectangle clamped to the crop box.</param>
 /// <param name="Source">The originating PdfPig image, or <c>null</c> for a vector-drawn code located by rasterising the page.</param>
-/// <param name="Role">The semantic role: <c>"figure"</c> (default), <c>"qr-code"</c>, or <c>"barcode"</c>.</param>
+/// <param name="Role">The semantic role: <c>"unknown"</c> (default, an unclassified raster figure), <c>"qr-code"</c>, or <c>"barcode"</c>.</param>
 /// <param name="CodeType">The code symbology (e.g. <c>"qr-code"</c>, <c>"code-128"</c>) when this is a code; otherwise <c>null</c>.</param>
 /// <param name="DecodedText">The decoded code payload, or <c>null</c>.</param>
 /// <param name="AltSource">Provenance of any associated text: <c>"original"</c>, <c>"machine-decoded"</c>, or <c>"missing"</c>.</param>
 public readonly record struct DetectedImage(
     BoundingBox BoundingBox,
     IPdfImage? Source,
-    string Role = "figure",
+    string Role = "unknown",
     string? CodeType = null,
     string? DecodedText = null,
     string? AltSource = null);

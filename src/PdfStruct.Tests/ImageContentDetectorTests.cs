@@ -71,15 +71,15 @@ public class ImageContentDetectorTests
         // ImageOutput defaults to Off — extraction stays text-only, so existing
         // output is unchanged.
         var result = ParseFixture("plos_game_based_education.pdf", ImageOutputMode.Off);
-        Assert.DoesNotContain(result.Document.Kids, e => e is ImageElement);
+        Assert.DoesNotContain(result.Document.Kids, e => e is FigureElement);
     }
 
     [Fact]
-    public void Parse_WithImageOutput_EmitsImageElementsWithinPage()
+    public void Parse_WithImageOutput_EmitsFigureElementsWithinPage()
     {
         var result = ParseFixture("plos_game_based_education.pdf", ImageOutputMode.External);
 
-        var images = result.Document.Kids.OfType<ImageElement>().ToList();
+        var images = result.Document.Kids.OfType<FigureElement>().ToList();
         Assert.NotEmpty(images);
         foreach (var image in images)
         {
