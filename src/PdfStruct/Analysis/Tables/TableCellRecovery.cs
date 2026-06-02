@@ -68,13 +68,15 @@ internal static class TableCellRecovery
     /// <param name="groupBoundaries">The x-positions of the interior vertical rules — the group-band separators; empty for a single-level header.</param>
     /// <param name="rowBoundaries">The y-positions of the asserted row boundaries, top to bottom.</param>
     /// <param name="pageNumber">The 1-indexed page the region sits on.</param>
+    /// <param name="columnAnchors">Optional detector-provided stable column anchors, used to seed a borderless single-band grid.</param>
     /// <returns>The recovered rows, top to bottom, or an empty list when no structure could be read.</returns>
     public static List<TableRow> Recover(
         IReadOnlyList<Word> words,
         BoundingBox region,
         IReadOnlyList<double> groupBoundaries,
         IReadOnlyList<double> rowBoundaries,
-        int pageNumber)
+        int pageNumber,
+        IReadOnlyList<double>? columnAnchors = null)
     {
         ArgumentNullException.ThrowIfNull(words);
         ArgumentNullException.ThrowIfNull(groupBoundaries);
@@ -85,7 +87,7 @@ internal static class TableCellRecovery
         var bands = BuildBands(region, groupBoundaries);
         var tolerance = Math.Max(MinColumnCenterTolerance, ColumnCenterToleranceFactor * Median(words.Select(w => w.BoundingBox.Height)));
 
-        AssignLeafColumns(bands, rowWords, tolerance);
+        AssignLeafColumns(bands, rowWords, tolerance, region, columnAnchors ?? []);
 
         var rows = new List<TableRow>();
         var rowNumber = 0;
@@ -191,11 +193,17 @@ internal static class TableCellRecovery
     /// a band whose words never align that way (a free-text label column) is one
     /// leaf spanning the band.
     /// </summary>
-    private static void AssignLeafColumns(List<Band> bands, List<List<Word>> rowWords, double tolerance)
+    private static void AssignLeafColumns(
+        List<Band> bands,
+        List<List<Word>> rowWords,
+        double tolerance,
+        BoundingBox region,
+        IReadOnlyList<double> columnAnchors)
     {
         var globalStart = 0;
-        foreach (var band in bands)
+        for (var bandIndex = 0; bandIndex < bands.Count; bandIndex++)
         {
+            var band = bands[bandIndex];
             var centersByRow = new List<List<double>>();
             foreach (var row in rowWords)
             {
@@ -207,10 +215,89 @@ internal static class TableCellRecovery
             }
 
             var stable = StableColumnCenters(centersByRow, tolerance);
-            band.Leaves = stable.Count >= 1 ? stable : [(band.Left + band.Right) / 2.0];
+            if (bands.Count == 1)
+            {
+                var seeded = SeededLeafCenters(region, rowWords, columnAnchors, tolerance);
+                band.Leaves = seeded.Count > 0 ? seeded : stable.Count >= 1 ? stable : [(band.Left + band.Right) / 2.0];
+            }
+            else if (bandIndex == 0 && LooksLikeStubLabelBand(rowWords, band, stable.Count))
+            {
+                band.Leaves = [(band.Left + band.Right) / 2.0];
+            }
+            else
+            {
+                band.Leaves = stable.Count >= 1 ? stable : [(band.Left + band.Right) / 2.0];
+            }
             band.GlobalStart = globalStart;
             globalStart += band.Leaves.Count;
         }
+    }
+
+    /// <summary>
+    /// In a borderless single-band grid, reuse the classifier's stable column
+    /// anchors as leaf centres so free-text row labels do not create spurious
+    /// word-centre leaves. When the first value column is asserted but a stub
+    /// label sits to its left, synthesize that stub as the first leaf.
+    /// </summary>
+    private static List<double> SeededLeafCenters(
+        BoundingBox region,
+        List<List<Word>> rowWords,
+        IReadOnlyList<double> columnAnchors,
+        double tolerance)
+    {
+        var anchors = columnAnchors
+            .Where(x => x > region.Left + InteriorMargin && x < region.Right - InteriorMargin)
+            .OrderBy(x => x)
+            .ToList();
+        if (anchors.Count < 2) return [];
+
+        var first = anchors[0];
+        var leftWords = rowWords
+            .SelectMany(row => row)
+            .Where(w => w.BoundingBox.CenterX < first - Math.Max(InteriorMargin, tolerance))
+            .Select(w => w.BoundingBox.CenterX)
+            .ToList();
+        if (leftWords.Count > 0)
+            anchors.Insert(0, Median(leftWords));
+
+        return anchors;
+    }
+
+    /// <summary>
+    /// Detects the common left stub column in a ruled academic table. Method or
+    /// item labels often repeat tokens such as "et", "al", and citations at
+    /// similar x positions; treating those as leaf columns bloats the grid and
+    /// makes the precision gate reject an otherwise valid table. Numeric/value
+    /// bands keep their stable leaves.
+    /// </summary>
+    private static bool LooksLikeStubLabelBand(
+        List<List<Word>> rowWords,
+        Band band,
+        int stableLeafCount)
+    {
+        if (stableLeafCount <= 1) return false;
+
+        var rows = rowWords
+            .Select(row => row.Where(w => InBand(w, band)).ToList())
+            .Where(row => row.Count > 0)
+            .ToList();
+        if (rows.Count < 3) return false;
+
+        var multiWordRows = rows.Count(row => row.Count >= 2);
+        var alphabeticRows = rows.Count(row => row.Any(w => w.Text.Any(char.IsLetter)));
+        var shortValueRows = rows.Count(row => row.All(w => LooksLikeShortValue(w.Text)));
+
+        return multiWordRows >= 0.45 * rows.Count
+               && alphabeticRows >= 0.45 * rows.Count
+               && shortValueRows < 0.5 * rows.Count;
+    }
+
+    private static bool LooksLikeShortValue(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0) return false;
+        if (trimmed is "-" or "–" or "—") return true;
+        return trimmed.All(c => char.IsDigit(c) || c is '.' or ',' or '%' or '*' or '+' or '-' or '(' or ')');
     }
 
     /// <summary>Clusters word centres across rows and returns the cluster means whose centre recurs in enough rows to be a column.</summary>

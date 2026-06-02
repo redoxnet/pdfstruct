@@ -61,7 +61,9 @@ public static partial class CaptionBinder
         // A target may take one caption and one source note; a candidate binds once.
         var usedTargetKind = new HashSet<(int Target, bool IsSource)>();
         var usedCandidate = new HashSet<int>();
-        foreach (var pair in pairs.OrderByDescending(p => p.Score))
+        foreach (var pair in pairs
+            .OrderByDescending(p => p.HasBoost)
+            .ThenByDescending(p => p.Score))
         {
             if (usedCandidate.Contains(pair.CandidateIndex)) continue;
             if (usedTargetKind.Contains((pair.TargetIndex, pair.IsSource))) continue;

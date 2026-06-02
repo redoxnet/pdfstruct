@@ -1121,16 +1121,58 @@ public sealed class PdfStructParser
             var borderless = pageBorderlessTables.TryGetValue(page, out var b) ? b : [];
             var regions = TableDetector.Merge(ruled, borderless);
             if (regions.Count == 0) continue;
+            var contentRegions = regions.ToList();
 
             var claimed = new List<List<TextLineBlock>>(regions.Count);
             for (var i = 0; i < regions.Count; i++) claimed.Add([]);
 
+            var owners = new List<int>(pageLines[page].Count);
             var remaining = new List<TextLineBlock>();
             foreach (var line in pageLines[page])
             {
                 var owner = OwningTableRegion(line.BoundingBox, regions);
+                owners.Add(owner);
                 if (owner >= 0) claimed[owner].Add(line);
                 else remaining.Add(line);
+            }
+
+            var releasedCaptionContinuations = new HashSet<TextLineBlock>();
+            var regionsWithReleasedCaptionContinuations = new HashSet<int>();
+            for (var i = 0; i < claimed.Count; i++)
+            {
+                foreach (var line in LeadingCaptionContinuationLines(claimed[i]))
+                {
+                    releasedCaptionContinuations.Add(line);
+                    regionsWithReleasedCaptionContinuations.Add(i);
+                }
+            }
+
+            if (releasedCaptionContinuations.Count > 0)
+            {
+                claimed = new List<List<TextLineBlock>>(regions.Count);
+                for (var i = 0; i < regions.Count; i++) claimed.Add([]);
+                remaining = [];
+
+                var index = 0;
+                foreach (var line in pageLines[page])
+                {
+                    var owner = owners[index++];
+                    if (owner >= 0 && !releasedCaptionContinuations.Contains(line))
+                        claimed[owner].Add(line);
+                    else
+                        remaining.Add(line);
+                }
+
+                foreach (var i in regionsWithReleasedCaptionContinuations)
+                {
+                    if (claimed[i].Count == 0) continue;
+                    var box = contentRegions[i].BoundingBox;
+                    var claimedTop = claimed[i].Max(l => l.Top);
+                    contentRegions[i] = contentRegions[i] with
+                    {
+                        BoundingBox = new Models.BoundingBox(box.Left, box.Bottom, box.Right, Math.Min(box.Top, claimedTop))
+                    };
+                }
             }
 
             var hRules = pageHorizontalRules.TryGetValue(page, out var h) ? h : [];
@@ -1139,13 +1181,70 @@ public sealed class PdfStructParser
             pageLines[page] = remaining;
             result[page] = regions
                 .Select((region, i) => new TableRegionContent(
-                    region,
-                    TableTextRowBuilder.Build(claimed[i], region.BoundingBox, hRules, vRules),
+                    contentRegions[i],
+                    TableTextRowBuilder.Build(claimed[i], contentRegions[i].BoundingBox, hRules, vRules),
                     StructuredRegionClassifier.Classify(
-                        claimed[i], region.BoundingBox, vRules, region.Kind == "borderless")))
+                        claimed[i], contentRegions[i].BoundingBox, vRules, region.Kind == "borderless")))
                 .ToList();
         }
         return result;
+    }
+
+    /// <summary>
+    /// Lines such as a wrapped caption continuation can fall inside a generously
+    /// detected table box. If the top claimed row is one lowercase continuation
+    /// line and the next row is already a multi-column table row, release that
+    /// line so normal paragraph/caption merging can attach it to the caption.
+    /// </summary>
+    private static IReadOnlyList<TextLineBlock> LeadingCaptionContinuationLines(IReadOnlyList<TextLineBlock> claimed)
+    {
+        if (claimed.Count < 3) return [];
+
+        var rows = GroupClaimRows(claimed);
+        var released = new List<TextLineBlock>();
+        while (rows.Count >= 2 && IsCaptionContinuationRow(rows[0], rows[1]))
+        {
+            released.AddRange(rows[0]);
+            rows.RemoveAt(0);
+        }
+
+        return released;
+    }
+
+    private static bool IsCaptionContinuationRow(List<TextLineBlock> row, List<TextLineBlock> nextRow)
+    {
+        if (row.Count != 1 || nextRow.Count < 2) return false;
+
+        var text = row[0].Text.Trim();
+        if (text.Length == 0 || !char.IsLower(text[0])) return false;
+        if (!text.Any(char.IsLetter)) return false;
+
+        return text.EndsWith(".", StringComparison.Ordinal)
+               || text.EndsWith(";", StringComparison.Ordinal)
+               || text.EndsWith(":", StringComparison.Ordinal);
+    }
+
+    private static List<List<TextLineBlock>> GroupClaimRows(IReadOnlyList<TextLineBlock> lines)
+    {
+        var ordered = lines.OrderByDescending(l => l.BaselineY).ThenBy(l => l.Left).ToList();
+        var rows = new List<List<TextLineBlock>>();
+        foreach (var line in ordered)
+        {
+            if (rows.Count == 0)
+            {
+                rows.Add([line]);
+                continue;
+            }
+
+            var current = rows[^1];
+            var tolerance = Math.Max(1.5, 0.4 * Math.Min(current.Min(c => c.FontSize), line.FontSize));
+            if (Math.Abs(current.Average(c => c.BaselineY) - line.BaselineY) <= tolerance)
+                current.Add(line);
+            else
+                rows.Add([line]);
+        }
+
+        return rows;
     }
 
     /// <summary>Returns the index of the region that contains a majority of the line's area, or -1 when no region claims it.</summary>
@@ -1253,7 +1352,14 @@ public sealed class PdfStructParser
 
                 var groupBoundaries = InteriorVerticalRuleCenters(vRules, table.BoundingBox);
                 var rows = TableCellRecovery.Recover(
-                    regionWords, table.BoundingBox, groupBoundaries, table.RowAnchors, pageGroup.Key);
+                    regionWords, table.BoundingBox, groupBoundaries, table.RowAnchors, pageGroup.Key, table.ColumnAnchors);
+                if (rows.Count == 0
+                    && table.ColumnAnchors.Count > 0
+                    && table.RowAnchors.Count >= table.ColumnAnchors.Count * 2)
+                {
+                    rows = TableCellRecovery.Recover(
+                        regionWords, table.BoundingBox, table.ColumnAnchors, table.RowAnchors, pageGroup.Key, table.ColumnAnchors);
+                }
                 if (rows.Count == 0) continue;
 
                 table.Rows = rows;

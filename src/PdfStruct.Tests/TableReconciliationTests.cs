@@ -12,13 +12,25 @@ public class TableReconciliationTests
     [Theory]
     [InlineData("plos_game_based_education.pdf")]
     [InlineData("plos_utilizing_llm.pdf")]
-    public void Parse_DetectedTables_CarryClaimedRawText(string fixtureName)
+    public void Parse_DetectedTables_AreRecoveredOrCarryClaimedRawText(string fixtureName)
     {
         var doc = ParseFixture(fixtureName);
 
         var tables = doc.Kids.OfType<TableElement>().ToList();
         Assert.NotEmpty(tables);
-        Assert.All(tables, t => Assert.NotEmpty(t.TextLines));
+        Assert.All(tables, t =>
+        {
+            if (t.Rows.Count > 0)
+            {
+                Assert.Empty(t.TextLines);
+                Assert.True(t.NumberOfRows > 0);
+                Assert.True(t.NumberOfColumns > 0);
+            }
+            else
+            {
+                Assert.NotEmpty(t.TextLines);
+            }
+        });
     }
 
     [Theory]
@@ -41,6 +53,27 @@ public class TableReconciliationTests
                 Assert.True(share <= 0.5,
                     $"Paragraph {paragraph.Id} overlaps table {table.Id} by {share:P0}; the table should own that text.");
             }
+    }
+
+    [Fact]
+    public void Parse_TableCaptionContinuation_IsNotClaimedAsTableRow()
+    {
+        var doc = ParseFixture("plos_game_based_education.pdf");
+
+        var caption = doc.Kids.OfType<CaptionElement>()
+            .Single(c => c.PageNumber == 6 && c.Text.Content.StartsWith("Table 1.", StringComparison.Ordinal));
+        Assert.Contains("and post-intervention.", caption.Text.Content);
+
+        var table = doc.Kids.OfType<TableElement>()
+            .Single(t => t.PageNumber == 6 && t.NumberOfColumns == 3);
+        var cellTexts = table.Rows
+            .SelectMany(r => r.Cells)
+            .SelectMany(c => c.Kids.OfType<ParagraphElement>())
+            .Select(p => p.Text.Content)
+            .ToList();
+
+        Assert.DoesNotContain("and post-intervention.", cellTexts);
+        Assert.Contains("Scale/ Subscale", cellTexts);
     }
 
     private static PdfDocument ParseFixture(string fixtureName)
