@@ -55,6 +55,14 @@ public sealed class PdfStructOptions
     public bool DetectVectorFigures { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets whether to detect borderless tables (aligned text columns
+    /// with no ruling lines) and emit them as <see cref="Models.TableElement"/>s.
+    /// Runs before paragraph assembly; detected table lines are removed from the
+    /// paragraph stream. Default: true.
+    /// </summary>
+    public bool DetectTables { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the directory that extracted image files are written to when
     /// <see cref="ImageOutput"/> is <see cref="ImageOutputMode.External"/>. When
     /// <c>null</c>, external mode emits image elements without a file (structure

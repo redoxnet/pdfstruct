@@ -3,6 +3,7 @@
 
 using System.Text.RegularExpressions;
 using PdfStruct.Analysis;
+using PdfStruct.Analysis.Tables;
 using PdfStruct.Rendering;
 using PdfStruct.Safety;
 using UglyToad.PdfPig;
@@ -274,6 +275,8 @@ public sealed class PdfStructParser
         var pageCuts = new Dictionary<int, (IReadOnlyList<PdfRectangle> Vertical, IReadOnlyList<PdfRectangle> Horizontal)>(pdf.NumberOfPages);
         var pageImages = new Dictionary<int, IReadOnlyList<DetectedImage>>(pdf.NumberOfPages);
         var pageVectorFigures = new Dictionary<int, List<DetectedImage>>(pdf.NumberOfPages);
+        var pageHorizontalRules = new Dictionary<int, IReadOnlyList<Models.BoundingBox>>(pdf.NumberOfPages);
+        var pageVerticalRules = new Dictionary<int, IReadOnlyList<Models.BoundingBox>>(pdf.NumberOfPages);
         var extractImages = _options.ImageOutput != ImageOutputMode.Off;
         for (var p = 1; p <= pdf.NumberOfPages; p++)
         {
@@ -282,6 +285,14 @@ public sealed class PdfStructParser
             pageHeights[p] = page.Height;
             pageCuts[p] = DetectStructuralCuts(page, _options.FilterHiddenText);
             pageLines[p] = ExtractPageTextLines(page, pageCuts[p].Vertical);
+
+            if (_options.DetectTables)
+            {
+                var (horizontal, vertical) = TextAwareRuledTableDetector.ExtractRules(page);
+                if (horizontal.Count > 0) pageHorizontalRules[p] = horizontal;
+                if (vertical.Count > 0) pageVerticalRules[p] = vertical;
+            }
+
             if (extractImages)
             {
                 var detected = ImageContentDetector.DetectContentImages(page);
@@ -317,6 +328,14 @@ public sealed class PdfStructParser
 
         if (pageLists.Count > 0)
             ApplyConservativeReconciliation(pageLines, originalPageLines, pageLists);
+
+        var pageBorderlessTables = _options.DetectTables
+            ? DetectBorderlessTablesPerPage(pageLines, pageCuts)
+            : new Dictionary<int, IReadOnlyList<DetectedTable>>();
+
+        var pageRuledTables = _options.DetectTables
+            ? DetectRuledTablesPerPage(pageLines, pageHorizontalRules, pageVerticalRules)
+            : new Dictionary<int, IReadOnlyList<DetectedTable>>();
 
         var pageBlocks = new Dictionary<int, IReadOnlyList<TextBlock>>(pdf.NumberOfPages);
         var statsOnlyBlocks = new List<DocumentTextBlock>();
@@ -387,6 +406,9 @@ public sealed class PdfStructParser
             if (repeatingIds.Count > 0)
                 doc.Kids.RemoveAll(e => repeatingIds.Contains(e.Id));
         }
+
+        if (_options.DetectTables)
+            InsertTableRegions(doc.Kids, pageRuledTables, pageBorderlessTables);
 
         RenumberElements(doc.Kids);
 
@@ -979,6 +1001,130 @@ public sealed class PdfStructParser
 
         return null;
     }
+
+    /// <summary>
+    /// Detects borderless table regions on every page, running the detector
+    /// independently within each column slab when vertical structural cuts
+    /// exist. Slab-local detection keeps a two-column body layout from reading as
+    /// a two-column table: left- and right-column lines land in different slabs
+    /// and are never paired into a row. Non-destructive — the line stream is left
+    /// intact, since region detection only annotates.
+    /// </summary>
+    /// <param name="pageLines">Per-page lines.</param>
+    /// <param name="pageCuts">Per-page structural cuts, supplying the column slabs.</param>
+    /// <returns>The borderless table regions per page, keyed by 1-indexed page number.</returns>
+    private static Dictionary<int, IReadOnlyList<DetectedTable>> DetectBorderlessTablesPerPage(
+        Dictionary<int, IReadOnlyList<TextLineBlock>> pageLines,
+        Dictionary<int, (IReadOnlyList<PdfRectangle> Vertical, IReadOnlyList<PdfRectangle> Horizontal)> pageCuts)
+    {
+        var result = new Dictionary<int, IReadOnlyList<DetectedTable>>();
+        foreach (var page in pageLines.Keys.ToList())
+        {
+            var verticalCuts = pageCuts.TryGetValue(page, out var cuts) ? cuts.Vertical : [];
+            var tables = DetectBorderlessTablesOnPage(pageLines[page], verticalCuts);
+            if (tables.Count > 0) result[page] = tables;
+        }
+        return result;
+    }
+
+    /// <summary>Runs the borderless detector within each column slab and merges the regions.</summary>
+    private static IReadOnlyList<DetectedTable> DetectBorderlessTablesOnPage(
+        IReadOnlyList<TextLineBlock> pageLines, IReadOnlyList<PdfRectangle> verticalCuts)
+    {
+        if (verticalCuts.Count == 0)
+            return BorderlessTableDetector.Detect(pageLines);
+
+        var boundaries = verticalCuts
+            .Select(c => (c.Left + c.Right) / 2.0)
+            .OrderBy(x => x)
+            .ToList();
+
+        var columnGroups = new List<List<TextLineBlock>>(boundaries.Count + 1);
+        for (var i = 0; i < boundaries.Count + 1; i++)
+            columnGroups.Add([]);
+
+        foreach (var line in pageLines)
+        {
+            var center = (line.Left + line.Right) / 2.0;
+            var col = 0;
+            while (col < boundaries.Count && center > boundaries[col]) col++;
+            columnGroups[col].Add(line);
+        }
+
+        var merged = new List<DetectedTable>();
+        foreach (var group in columnGroups)
+        {
+            if (group.Count == 0) continue;
+            merged.AddRange(BorderlessTableDetector.Detect(group));
+        }
+        return merged;
+    }
+
+    /// <summary>
+    /// Detects ruled table regions per page from the page's horizontal and
+    /// vertical rules joined with its text rows. Runs page-wide (not per slab):
+    /// each rule's horizontal extent bounds the table to its own column.
+    /// </summary>
+    private static Dictionary<int, IReadOnlyList<DetectedTable>> DetectRuledTablesPerPage(
+        Dictionary<int, IReadOnlyList<TextLineBlock>> pageLines,
+        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageHorizontalRules,
+        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageVerticalRules)
+    {
+        var result = new Dictionary<int, IReadOnlyList<DetectedTable>>();
+        foreach (var page in pageLines.Keys.ToList())
+        {
+            if (!pageHorizontalRules.TryGetValue(page, out var horizontal)) continue;
+            var vertical = pageVerticalRules.TryGetValue(page, out var v) ? v : [];
+            var tables = TextAwareRuledTableDetector.Detect(pageLines[page], horizontal, vertical);
+            if (tables.Count > 0) result[page] = tables;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Merges the ruled and borderless regions for each page and inserts a
+    /// region-only <see cref="Models.TableElement"/> for each into the document
+    /// at its reading-order position. Inserted before <see cref="RenumberElements"/>
+    /// and <see cref="CaptionBinder"/> so the tables receive IDs and pick up
+    /// their captions. The element carries the bounding box only; cell structure
+    /// is recovered in a later pass.
+    /// </summary>
+    private static void InsertTableRegions(
+        List<Models.ContentElement> kids,
+        IReadOnlyDictionary<int, IReadOnlyList<DetectedTable>> pageRuledTables,
+        IReadOnlyDictionary<int, IReadOnlyList<DetectedTable>> pageBorderlessTables)
+    {
+        var pages = pageRuledTables.Keys.Union(pageBorderlessTables.Keys);
+        foreach (var page in pages)
+        {
+            var ruled = pageRuledTables.TryGetValue(page, out var r) ? r : [];
+            var borderless = pageBorderlessTables.TryGetValue(page, out var b) ? b : [];
+            foreach (var region in TableDetector.Merge(ruled, borderless))
+                InsertByReadingOrder(kids, BuildTableRegionElement(region, page));
+        }
+    }
+
+    /// <summary>Inserts a table element before the first same-page element that begins at or below it, preserving reading order.</summary>
+    private static void InsertByReadingOrder(List<Models.ContentElement> kids, Models.TableElement table)
+    {
+        for (var i = 0; i < kids.Count; i++)
+        {
+            if (kids[i].PageNumber != table.PageNumber)
+            {
+                if (kids[i].PageNumber > table.PageNumber) { kids.Insert(i, table); return; }
+                continue;
+            }
+            if (kids[i].BoundingBox.Top <= table.BoundingBox.Top) { kids.Insert(i, table); return; }
+        }
+        kids.Add(table);
+    }
+
+    /// <summary>Builds a region-only <see cref="Models.TableElement"/> (bounding box, no rows or cells).</summary>
+    private static Models.TableElement BuildTableRegionElement(DetectedTable region, int pageNumber) => new()
+    {
+        PageNumber = pageNumber,
+        BoundingBox = region.BoundingBox
+    };
 
     /// <summary>
     /// Materialises a <see cref="Models.ListElement"/> from a detector
