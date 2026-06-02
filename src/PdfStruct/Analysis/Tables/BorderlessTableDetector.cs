@@ -1,6 +1,7 @@
 // Copyright (c) Jong Hyun Kim. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
+using System.Text.RegularExpressions;
 using PdfStruct.Models;
 
 namespace PdfStruct.Analysis.Tables;
@@ -62,6 +63,13 @@ internal static class BorderlessTableDetector
 
     /// <summary>Minimum tabular rows a region must contain.</summary>
     public const int MinTabularRows = 2;
+
+    /// <summary>A header row is attached above the body only while each successive row is within this factor of the font size of the last — multi-level headers stack tightly.</summary>
+    public const double HeaderRowGapFactor = 2.0;
+
+    private static readonly Regex CaptionPattern = new(
+        @"^\s*(Table|Tab\.|Figure|Fig\.|표|그림|도)\s*\d",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
     /// Detects borderless table regions within a single column slab.
@@ -152,9 +160,49 @@ internal static class BorderlessTableDetector
                 bounds = bounds is null ? cell.BoundingBox : bounds.Value.Merge(cell.BoundingBox);
 
         if (bounds is null) return false;
+
+        // Attach the multi-level header band above the body: rows that align to,
+        // or span groups of, the body columns. The header need not match the body
+        // column count (a spanning group label like "LR" covers several columns;
+        // the row-header/stub column may have no header). A caption ("Table 1")
+        // is an external label, not payload, and stops the walk.
+        var columnTolerance = ColumnToleranceFactor * fontSize;
+        var previousBaseline = rows[first].Baseline;
+        for (var k = first - 1; k >= 0; k--)
+        {
+            var row = rows[k];
+            if (row.Baseline - previousBaseline > HeaderRowGapFactor * fontSize) break;
+            if (IsCaptionRow(row) || !IsHeaderRow(row, anchors, columnTolerance)) break;
+            foreach (var cell in row.Cells)
+                bounds = bounds.Value.Merge(cell.BoundingBox);
+            previousBaseline = row.Baseline;
+        }
+
         box = bounds.Value;
         return true;
     }
+
+    /// <summary>
+    /// A header-band row: every cell either aligns to a body column or spans a
+    /// group of columns (a spanning label), and the row is not prose. Cells need
+    /// not cover every column, so a missing row-header/stub is allowed.
+    /// </summary>
+    private static bool IsHeaderRow(Row row, List<double> anchors, double tolerance)
+    {
+        if (row.Cells.Count == 0) return false;
+        if (Median(row.Cells.Select(c => (double)c.Text.Length)) > MaxMedianCellTextLength) return false;
+
+        foreach (var cell in row.Cells)
+        {
+            var aligns = NearestColumn(cell.Left, anchors, tolerance) >= 0;
+            var spans = anchors.Count(a => a >= cell.Left - tolerance && a <= cell.Right + tolerance) >= 2;
+            if (!aligns && !spans) return false;
+        }
+        return true;
+    }
+
+    private static bool IsCaptionRow(Row row) =>
+        CaptionPattern.IsMatch(string.Join(" ", row.Cells.OrderBy(c => c.Left).Select(c => c.Text)));
 
     /// <summary>True when some column reads as a run of integers that only ever increases or only ever decreases — a page-number column.</summary>
     private static bool HasMonotonicIntegerColumn(List<Row> rows, int first, int last, List<double> anchors, double tolerance)

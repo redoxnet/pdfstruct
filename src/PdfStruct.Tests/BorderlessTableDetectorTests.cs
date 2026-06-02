@@ -44,6 +44,40 @@ public class BorderlessTableDetectorTests
     }
 
     [Fact]
+    public void Detect_MultiLevelHeader_IncludedAboveBody()
+    {
+        // A spanning group label ("GROUP", covering all columns) and an aligned
+        // sub-header sit above the body; both belong to the table.
+        var lines = new List<TextLineBlock>
+        {
+            Cell("GROUP", 50, 728, width: 260),
+            Cell("h1", 50, 714), Cell("h2", 150, 714), Cell("h3", 250, 714),
+            Cell("a", 50, 700), Cell("p", 150, 700), Cell("x", 250, 700),
+            Cell("b", 50, 686), Cell("q", 150, 686), Cell("y", 250, 686),
+            Cell("c", 50, 672), Cell("r", 250, 672), Cell("z", 350, 672),
+        };
+
+        var region = Assert.Single(BorderlessTableDetector.Detect(lines));
+        Assert.True(region.BoundingBox.Top >= 728, "Region should extend up to include the spanning group header.");
+    }
+
+    [Fact]
+    public void Detect_CaptionAboveHeader_Excluded()
+    {
+        // The "Table 1" caption is an external label, not part of the table.
+        var lines = new List<TextLineBlock>
+        {
+            Cell("Table 1", 50, 726),
+            Cell("h1", 50, 714), Cell("h2", 150, 714), Cell("h3", 250, 714),
+            Cell("a", 50, 700), Cell("p", 150, 700), Cell("x", 250, 700),
+            Cell("b", 50, 686), Cell("q", 150, 686), Cell("y", 250, 686),
+        };
+
+        var region = Assert.Single(BorderlessTableDetector.Detect(lines));
+        Assert.True(region.BoundingBox.Top < 726, "Caption must not be absorbed into the table region.");
+    }
+
+    [Fact]
     public void Detect_TwoColumnProse_Rejected()
     {
         const string left = "the study examined patient compliance over twelve weeks";
