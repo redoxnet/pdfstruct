@@ -97,6 +97,16 @@ public sealed class TableElement : ContentElement
     /// <summary>Gets the table rows.</summary>
     public List<TableRow> Rows { get; set; } = [];
 
+    /// <summary>
+    /// Gets or sets the table's raw text rows, top to bottom, captured from the
+    /// text lines that fall inside the table region. The region claims this text
+    /// so it is not also emitted as overlapping sibling paragraphs; it is
+    /// preserved here for retrieval until cell structure is recovered in a later
+    /// pass, during which <see cref="Rows"/> stays empty. Linked captions and
+    /// source notes are external elements and are not stored here.
+    /// </summary>
+    public List<string> TextLines { get; set; } = [];
+
     /// <summary>Gets or sets the previous table fragment ID (cross-page).</summary>
     public int? PreviousTableId { get; set; }
 

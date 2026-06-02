@@ -73,6 +73,17 @@ public sealed class MarkdownRenderer : IDocumentRenderer
 
     private static void RenderTable(TableElement table, StringBuilder sb)
     {
+        // Until cell structure is recovered, a detected region carries only its
+        // claimed raw text. Render it as a delimited text block so the table's
+        // content survives for retrieval without a fabricated grid.
+        if (table.Rows.Count == 0)
+        {
+            if (table.TextLines.Count == 0) return;
+            sb.AppendLine("[table]");
+            foreach (var line in table.TextLines) sb.AppendLine(line);
+            return;
+        }
+
         foreach (var row in table.Rows)
         {
             sb.Append('|');
@@ -207,6 +218,7 @@ public sealed class JsonRenderer : IDocumentRenderer
                 dict["number of columns"] = t.NumberOfColumns;
                 if (t.PreviousTableId.HasValue) dict["previous table id"] = t.PreviousTableId;
                 if (t.NextTableId.HasValue) dict["next table id"] = t.NextTableId;
+                if (t.TextLines.Count > 0) dict["text lines"] = t.TextLines;
                 dict["rows"] = t.Rows.Select(r => new Dictionary<string, object?>
                 {
                     ["type"] = "table row",

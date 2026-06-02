@@ -337,6 +337,16 @@ public sealed class PdfStructParser
             ? DetectRuledTablesPerPage(pageLines, pageHorizontalRules, pageVerticalRules)
             : new Dictionary<int, IReadOnlyList<DetectedTable>>();
 
+        // The table region claims the text lines inside it before blocks are
+        // built, so that text becomes the table's own content rather than a
+        // sibling paragraph overlapping the region. Removing the interior lines
+        // also lets a caption that sits just outside the region — swallowed today
+        // into a mega-paragraph spanning the table — form its own paragraph and
+        // bind correctly.
+        var pageTableContent = _options.DetectTables
+            ? ReconcileTableRegions(pageLines, pageRuledTables, pageBorderlessTables)
+            : new Dictionary<int, List<TableRegionContent>>();
+
         var pageBlocks = new Dictionary<int, IReadOnlyList<TextBlock>>(pdf.NumberOfPages);
         var statsOnlyBlocks = new List<DocumentTextBlock>();
         for (var p = 1; p <= pdf.NumberOfPages; p++)
@@ -408,7 +418,7 @@ public sealed class PdfStructParser
         }
 
         if (_options.DetectTables)
-            InsertTableRegions(doc.Kids, pageRuledTables, pageBorderlessTables);
+            InsertTableRegions(doc.Kids, pageTableContent);
 
         RenumberElements(doc.Kids);
 
@@ -1082,26 +1092,118 @@ public sealed class PdfStructParser
     }
 
     /// <summary>
-    /// Merges the ruled and borderless regions for each page and inserts a
-    /// region-only <see cref="Models.TableElement"/> for each into the document
-    /// at its reading-order position. Inserted before <see cref="RenumberElements"/>
-    /// and <see cref="CaptionBinder"/> so the tables receive IDs and pick up
-    /// their captions. The element carries the bounding box only; cell structure
-    /// is recovered in a later pass.
+    /// Merges the ruled and borderless regions for each page and strips the text
+    /// lines that fall inside a region out of <paramref name="pageLines"/>,
+    /// returning each region paired with the raw text rows it claimed. Run before
+    /// blocks are built so the claimed text never forms an overlapping paragraph
+    /// and an outside caption is freed to bind.
     /// </summary>
-    private static void InsertTableRegions(
-        List<Models.ContentElement> kids,
+    /// <param name="pageLines">Per-page lines; the interior lines of each table are removed in place.</param>
+    /// <param name="pageRuledTables">Ruled regions per page.</param>
+    /// <param name="pageBorderlessTables">Borderless regions per page.</param>
+    /// <returns>The merged regions with their claimed text rows, keyed by page number.</returns>
+    private static Dictionary<int, List<TableRegionContent>> ReconcileTableRegions(
+        Dictionary<int, IReadOnlyList<TextLineBlock>> pageLines,
         IReadOnlyDictionary<int, IReadOnlyList<DetectedTable>> pageRuledTables,
         IReadOnlyDictionary<int, IReadOnlyList<DetectedTable>> pageBorderlessTables)
     {
-        var pages = pageRuledTables.Keys.Union(pageBorderlessTables.Keys);
-        foreach (var page in pages)
+        var result = new Dictionary<int, List<TableRegionContent>>();
+        foreach (var page in pageLines.Keys.OrderBy(p => p))
         {
             var ruled = pageRuledTables.TryGetValue(page, out var r) ? r : [];
             var borderless = pageBorderlessTables.TryGetValue(page, out var b) ? b : [];
-            foreach (var region in TableDetector.Merge(ruled, borderless))
-                InsertByReadingOrder(kids, BuildTableRegionElement(region, page));
+            var regions = TableDetector.Merge(ruled, borderless);
+            if (regions.Count == 0) continue;
+
+            var claimed = new List<List<TextLineBlock>>(regions.Count);
+            for (var i = 0; i < regions.Count; i++) claimed.Add([]);
+
+            var remaining = new List<TextLineBlock>();
+            foreach (var line in pageLines[page])
+            {
+                var owner = OwningTableRegion(line.BoundingBox, regions);
+                if (owner >= 0) claimed[owner].Add(line);
+                else remaining.Add(line);
+            }
+
+            pageLines[page] = remaining;
+            result[page] = regions
+                .Select((region, i) => new TableRegionContent(region, BuildTableTextRows(claimed[i])))
+                .ToList();
         }
+        return result;
+    }
+
+    /// <summary>Returns the index of the region that contains a majority of the line's area, or -1 when no region claims it.</summary>
+    private static int OwningTableRegion(Models.BoundingBox line, IReadOnlyList<DetectedTable> regions)
+    {
+        const double minShare = 0.6;
+        var area = line.Area;
+        if (area <= 0) return -1;
+
+        var best = -1;
+        var bestShare = minShare;
+        for (var i = 0; i < regions.Count; i++)
+        {
+            var share = line.IntersectionArea(regions[i].BoundingBox) / area;
+            if (share > bestShare) { bestShare = share; best = i; }
+        }
+        return best;
+    }
+
+    /// <summary>Groups the claimed lines into baseline rows, top to bottom, joining each row's cells left to right into one raw text line.</summary>
+    private static List<string> BuildTableTextRows(List<TextLineBlock> lines)
+    {
+        if (lines.Count == 0) return [];
+
+        var ordered = lines.OrderByDescending(l => l.BaselineY).ToList();
+        var rows = new List<string>();
+        var current = new List<TextLineBlock>();
+        var baseline = 0.0;
+        foreach (var line in ordered)
+        {
+            if (current.Count == 0)
+            {
+                current.Add(line);
+                baseline = line.BaselineY;
+                continue;
+            }
+
+            var smaller = Math.Min(current.Min(c => c.FontSize), line.FontSize);
+            var tolerance = Math.Max(1.5, 0.4 * smaller);
+            if (baseline - line.BaselineY <= tolerance)
+            {
+                current.Add(line);
+            }
+            else
+            {
+                rows.Add(JoinRowCells(current));
+                current = [line];
+                baseline = line.BaselineY;
+            }
+        }
+        rows.Add(JoinRowCells(current));
+        return rows.Where(row => row.Length > 0).ToList();
+    }
+
+    /// <summary>Joins a baseline row's cells left to right into a single space-separated string.</summary>
+    private static string JoinRowCells(List<TextLineBlock> cells) =>
+        string.Join(" ", cells.OrderBy(c => c.Left).Select(c => c.Text.Trim())).Trim();
+
+    /// <summary>
+    /// Inserts a region-only <see cref="Models.TableElement"/> for each detected
+    /// table at its reading-order position. Run before <see cref="RenumberElements"/>
+    /// and <see cref="CaptionBinder"/> so the tables receive IDs and pick up their
+    /// captions. The element carries the bounding box and the claimed raw text;
+    /// cell structure is recovered in a later pass.
+    /// </summary>
+    private static void InsertTableRegions(
+        List<Models.ContentElement> kids,
+        Dictionary<int, List<TableRegionContent>> pageTableContent)
+    {
+        foreach (var page in pageTableContent.Keys.OrderBy(p => p))
+            foreach (var content in pageTableContent[page])
+                InsertByReadingOrder(kids, BuildTableRegionElement(content, page));
     }
 
     /// <summary>Inserts a table element before the first same-page element that begins at or below it, preserving reading order.</summary>
@@ -1119,12 +1221,16 @@ public sealed class PdfStructParser
         kids.Add(table);
     }
 
-    /// <summary>Builds a region-only <see cref="Models.TableElement"/> (bounding box, no rows or cells).</summary>
-    private static Models.TableElement BuildTableRegionElement(DetectedTable region, int pageNumber) => new()
+    /// <summary>Builds a region-only <see cref="Models.TableElement"/> carrying its bounding box and claimed raw text rows.</summary>
+    private static Models.TableElement BuildTableRegionElement(TableRegionContent content, int pageNumber) => new()
     {
         PageNumber = pageNumber,
-        BoundingBox = region.BoundingBox
+        BoundingBox = content.Region.BoundingBox,
+        TextLines = [.. content.TextRows]
     };
+
+    /// <summary>A detected table region paired with the raw text rows it claimed from the line stream.</summary>
+    private readonly record struct TableRegionContent(DetectedTable Region, IReadOnlyList<string> TextRows);
 
     /// <summary>
     /// Materialises a <see cref="Models.ListElement"/> from a detector
