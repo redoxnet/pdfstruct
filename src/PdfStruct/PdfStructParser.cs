@@ -79,6 +79,14 @@ public sealed class PdfStructParser
     private readonly ICodeDecoder? _codeDecoder;
     private readonly IImageRasterizer? _imageRasterizer;
 
+    /// <summary>A line opening with a footnote marker (dagger, asterisk, section, pilcrow).</summary>
+    private static readonly Regex FootnoteMarkerPattern = new(@"^\s*[†‡*§¶]", RegexOptions.Compiled);
+
+    /// <summary>A line that is a source note ("자료:", "출처:", "Source:", "Note:") or a URL/DOI.</summary>
+    private static readonly Regex SourceNoteOrUrlPattern = new(
+        @"^\s*(자료|출처|source|data source|note|notes)\s*[:：]|^\s*https?://|^\s*www\.|doi\.org|^\s*doi\s*:",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>Initializes with default options.</summary>
     public PdfStructParser() : this(new PdfStructOptions()) { }
 
@@ -1136,18 +1144,23 @@ public sealed class PdfStructParser
                 else remaining.Add(line);
             }
 
-            var releasedCaptionContinuations = new HashSet<TextLineBlock>();
-            var regionsWithReleasedCaptionContinuations = new HashSet<int>();
+            var releasedLines = new HashSet<TextLineBlock>();
+            var regionsWithReleases = new HashSet<int>();
             for (var i = 0; i < claimed.Count; i++)
             {
                 foreach (var line in LeadingCaptionContinuationLines(claimed[i]))
                 {
-                    releasedCaptionContinuations.Add(line);
-                    regionsWithReleasedCaptionContinuations.Add(i);
+                    releasedLines.Add(line);
+                    regionsWithReleases.Add(i);
+                }
+                foreach (var line in TrailingNoteLines(claimed[i]))
+                {
+                    releasedLines.Add(line);
+                    regionsWithReleases.Add(i);
                 }
             }
 
-            if (releasedCaptionContinuations.Count > 0)
+            if (releasedLines.Count > 0)
             {
                 claimed = new List<List<TextLineBlock>>(regions.Count);
                 for (var i = 0; i < regions.Count; i++) claimed.Add([]);
@@ -1157,20 +1170,25 @@ public sealed class PdfStructParser
                 foreach (var line in pageLines[page])
                 {
                     var owner = owners[index++];
-                    if (owner >= 0 && !releasedCaptionContinuations.Contains(line))
+                    if (owner >= 0 && !releasedLines.Contains(line))
                         claimed[owner].Add(line);
                     else
                         remaining.Add(line);
                 }
 
-                foreach (var i in regionsWithReleasedCaptionContinuations)
+                // Shrink each affected region to the extent it actually still
+                // claims, at both edges: a released caption above lifts the top,
+                // a released note below raises the bottom.
+                foreach (var i in regionsWithReleases)
                 {
                     if (claimed[i].Count == 0) continue;
                     var box = contentRegions[i].BoundingBox;
                     var claimedTop = claimed[i].Max(l => l.Top);
+                    var claimedBottom = claimed[i].Min(l => l.Bottom);
                     contentRegions[i] = contentRegions[i] with
                     {
-                        BoundingBox = new Models.BoundingBox(box.Left, box.Bottom, box.Right, Math.Min(box.Top, claimedTop))
+                        BoundingBox = new Models.BoundingBox(
+                            box.Left, Math.Max(box.Bottom, claimedBottom), box.Right, Math.Min(box.Top, claimedTop))
                     };
                 }
             }
@@ -1222,6 +1240,44 @@ public sealed class PdfStructParser
         return text.EndsWith(".", StringComparison.Ordinal)
                || text.EndsWith(";", StringComparison.Ordinal)
                || text.EndsWith(":", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A footnote, source note, or DOI line below the table body can fall inside a
+    /// generously detected table box and be claimed as a data row, diluting the
+    /// column structure. Walking up from the bottom, release each trailing
+    /// single-cell note row so it becomes a normal paragraph or source note; stop
+    /// at the first real (multi-cell) table row so data is never released.
+    /// </summary>
+    private static IReadOnlyList<TextLineBlock> TrailingNoteLines(IReadOnlyList<TextLineBlock> claimed)
+    {
+        if (claimed.Count < 3) return [];
+
+        var rows = GroupClaimRows(claimed);
+        var released = new List<TextLineBlock>();
+        while (rows.Count >= 2 && IsNoteRow(rows[^1]))
+        {
+            released.AddRange(rows[^1]);
+            rows.RemoveAt(rows.Count - 1);
+        }
+
+        return released;
+    }
+
+    /// <summary>A single-cell row that reads as a footnote marker, a source note, a URL/DOI, or an explanatory sentence.</summary>
+    private static bool IsNoteRow(List<TextLineBlock> row)
+    {
+        if (row.Count != 1) return false;
+
+        var text = row[0].Text.Trim();
+        if (text.Length == 0) return false;
+        if (FootnoteMarkerPattern.IsMatch(text) || SourceNoteOrUrlPattern.IsMatch(text)) return true;
+
+        // A prose sentence below the table — several words ending in a full stop —
+        // is an explanatory note, not a terse data row.
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var endsSentence = text.EndsWith(".", StringComparison.Ordinal) || text.EndsWith(";", StringComparison.Ordinal);
+        return words.Length >= 4 && endsSentence && text.Any(char.IsLetter);
     }
 
     private static List<List<TextLineBlock>> GroupClaimRows(IReadOnlyList<TextLineBlock> lines)

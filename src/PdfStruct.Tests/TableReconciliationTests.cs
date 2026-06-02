@@ -76,6 +76,42 @@ public class TableReconciliationTests
         Assert.Contains("Scale/ Subscale", cellTexts);
     }
 
+    [Fact]
+    public void Parse_TableTrailingNotes_AreReleasedNotClaimedAsTableContent()
+    {
+        // A table's footnotes, explanatory sentences, and DOI line sit below the
+        // body but inside the detected box. They must be released to normal
+        // elements, never claimed as table rows or raw table text.
+        var doc = ParseFixture("plos_game_based_education.pdf");
+        const string doi = "doi.org/10.1371/journal.pone.0345292.t003";
+
+        foreach (var table in doc.Kids.OfType<TableElement>())
+        {
+            Assert.DoesNotContain(table.TextLines, line => line.Contains(doi, StringComparison.Ordinal));
+            var cellTexts = table.Rows
+                .SelectMany(r => r.Cells)
+                .SelectMany(c => c.Kids.OfType<ParagraphElement>())
+                .Select(p => p.Text.Content);
+            Assert.DoesNotContain(cellTexts, text => text.Contains(doi, StringComparison.Ordinal));
+        }
+
+        // The released note survives as a non-table element rather than vanishing.
+        var nonTableText = doc.Kids
+            .Where(e => e is not TableElement)
+            .Select(ElementText)
+            .ToList();
+        Assert.Contains(nonTableText, text => text.Contains(doi, StringComparison.Ordinal));
+    }
+
+    private static string ElementText(ContentElement element) => element switch
+    {
+        ParagraphElement p => p.Text.Content,
+        SourceNoteElement n => n.Text.Content,
+        CaptionElement c => c.Text.Content,
+        HeadingElement h => h.Text.Content,
+        _ => string.Empty
+    };
+
     private static PdfDocument ParseFixture(string fixtureName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", fixtureName);
