@@ -364,9 +364,12 @@ public sealed class PdfStructParser
 
             var hasLists = pageLists.TryGetValue(p, out var listsOnPage) && listsOnPage.Count > 0;
             var hasImages = pageImages.TryGetValue(p, out var imagesOnPage) && imagesOnPage.Count > 0;
-            if (hasLists || hasImages)
+            var hasTables = pageTableContent.TryGetValue(p, out var tablesOnPage) && tablesOnPage.Count > 0;
+            if (hasLists || hasImages || hasTables)
             {
-                var extra = (hasLists ? listsOnPage!.Count : 0) + (hasImages ? imagesOnPage!.Count : 0);
+                var extra = (hasLists ? listsOnPage!.Count : 0)
+                    + (hasImages ? imagesOnPage!.Count : 0)
+                    + (hasTables ? tablesOnPage!.Count : 0);
                 var augmented = new List<TextBlock>(blocks.Count + extra);
                 augmented.AddRange(blocks);
 
@@ -384,6 +387,10 @@ public sealed class PdfStructParser
                 if (hasImages)
                     for (var i = 0; i < imagesOnPage!.Count; i++)
                         augmented.Add(MakeImagePlaceholder(imagesOnPage[i], p, i));
+
+                if (hasTables)
+                    for (var i = 0; i < tablesOnPage!.Count; i++)
+                        augmented.Add(MakeTablePlaceholder(tablesOnPage[i], p, i));
 
                 var ordered = _layoutAnalyzer.DetermineReadingOrder(augmented);
                 blocks = WithStandaloneFlag(ordered);
@@ -413,6 +420,9 @@ public sealed class PdfStructParser
         if (pageImages.Count > 0)
             ReplaceImagePlaceholders(doc.Kids, pageImages, Path.GetFileNameWithoutExtension(fileName), pdfBytes, pageGeometries);
 
+        if (pageTableContent.Count > 0)
+            ReplaceTablePlaceholders(doc.Kids, pageTableContent);
+
         TemplateClassConsistency.PromoteSharedTemplates(doc.Kids);
 
         var pageWidths = pageGeometries.ToDictionary(pair => pair.Key, pair => pair.Value.Width);
@@ -427,7 +437,6 @@ public sealed class PdfStructParser
 
         if (_options.DetectTables)
         {
-            InsertTableRegions(doc.Kids, pageTableContent);
             RecoverTableCells(doc.Kids, pdf, pageVerticalRules, pageHorizontalRules);
         }
 
@@ -956,6 +965,61 @@ public sealed class PdfStructParser
         }
     }
 
+    /// <summary>Sentinel prefix marking a table-region placeholder that flows through reading-order analysis and is resolved back to a table or raw region.</summary>
+    private const string TablePlaceholderPrefix = "PDFSTRUCT_TABLE_PLACEHOLDER";
+
+    /// <summary>Builds a sentinel block standing in for a detected table region during reading-order analysis.</summary>
+    private static TextBlock MakeTablePlaceholder(TableRegionContent table, int pageNumber, int indexOnPage)
+    {
+        var marker = $"{TablePlaceholderPrefix}{pageNumber}\u0001{indexOnPage}";
+        var bbox = table.Region.BoundingBox;
+        return new TextBlock(
+            bbox,
+            marker,
+            FontName: string.Empty,
+            FontSize: 0.0,
+            IsBold: false,
+            LineCount: Math.Max(1, table.Rows.Rows.Count),
+            FirstLineLeft: bbox.Left,
+            MedianLineLeft: bbox.Left,
+            LastLineLeft: bbox.Left,
+            FirstLineRight: bbox.Right,
+            MedianLineRight: bbox.Right,
+            LastLineRight: bbox.Right) with
+        { IsStandalone = false };
+    }
+
+    /// <summary>Replaces classified table placeholders with the corresponding region element, preserving the placeholder's reading-order ID.</summary>
+    private static void ReplaceTablePlaceholders(
+        List<Models.ContentElement> kids,
+        Dictionary<int, List<TableRegionContent>> pageTableContent)
+    {
+        for (var i = 0; i < kids.Count; i++)
+        {
+            var element = kids[i];
+            var content = element switch
+            {
+                Models.ParagraphElement p => p.Text.Content,
+                Models.HeadingElement h => h.Text.Content,
+                _ => null
+            };
+            if (content is null) continue;
+            if (!content.StartsWith(TablePlaceholderPrefix, StringComparison.Ordinal)) continue;
+
+            var rest = content[TablePlaceholderPrefix.Length..];
+            var sep = rest.IndexOf('\u0001');
+            if (sep < 0) continue;
+            if (!int.TryParse(rest.AsSpan(0, sep), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var pageNumber)) continue;
+            if (!int.TryParse(rest.AsSpan(sep + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var indexOnPage)) continue;
+            if (!pageTableContent.TryGetValue(pageNumber, out var tables)) continue;
+            if (indexOnPage < 0 || indexOnPage >= tables.Count) continue;
+
+            var replacement = BuildRegionElement(tables[indexOnPage], pageNumber);
+            replacement.Id = element.Id;
+            kids[i] = replacement;
+        }
+    }
+
     /// <summary>
     /// Persists a raster image's bytes onto the element according to
     /// <see cref="PdfStructOptions.ImageOutput"/>: embeds a Base64 PNG data URI,
@@ -1320,38 +1384,6 @@ public sealed class PdfStructParser
         return best;
     }
 
-    /// <summary>
-    /// Inserts an element for each detected region at its reading-order position —
-    /// a region-only <see cref="Models.TableElement"/> for a defensible grid, a
-    /// <see cref="Models.RegionElement"/> for a block we could not structure. Run
-    /// before <see cref="RenumberElements"/> and <see cref="CaptionBinder"/> so the
-    /// elements receive IDs and pick up their captions. A grid carries the claimed
-    /// raw text; cell structure is recovered in a later pass.
-    /// </summary>
-    private static void InsertTableRegions(
-        List<Models.ContentElement> kids,
-        Dictionary<int, List<TableRegionContent>> pageTableContent)
-    {
-        foreach (var page in pageTableContent.Keys.OrderBy(p => p))
-            foreach (var content in pageTableContent[page])
-                InsertByReadingOrder(kids, BuildRegionElement(content, page));
-    }
-
-    /// <summary>Inserts an element before the first same-page element that begins at or below it, preserving reading order.</summary>
-    private static void InsertByReadingOrder(List<Models.ContentElement> kids, Models.ContentElement element)
-    {
-        for (var i = 0; i < kids.Count; i++)
-        {
-            if (kids[i].PageNumber != element.PageNumber)
-            {
-                if (kids[i].PageNumber > element.PageNumber) { kids.Insert(i, element); return; }
-                continue;
-            }
-            if (kids[i].BoundingBox.Top <= element.BoundingBox.Top) { kids.Insert(i, element); return; }
-        }
-        kids.Add(element);
-    }
-
     /// <summary>Builds the region element — a region-only <see cref="Models.TableElement"/> (carrying its confident column and row anchors) for a grid, otherwise a raw-text <see cref="Models.RegionElement"/> with no asserted structure.</summary>
     private static Models.ContentElement BuildRegionElement(TableRegionContent content, int pageNumber) =>
         content.Classification.Kind == RegionStructure.Grid
@@ -1411,14 +1443,24 @@ public sealed class PdfStructParser
 
                 var groupBoundaries = InteriorVerticalRuleCenters(vRules, table.BoundingBox);
                 var ruleYs = RegionHorizontalRuleYs(hRules, table.BoundingBox);
-                var rows = TableCellRecovery.Recover(
-                    regionWords, table.BoundingBox, groupBoundaries, ruleYs, pageGroup.Key, table.ColumnAnchors);
+
+                List<Models.TableRow> RecoverWithRows(IReadOnlyList<double> boundaries)
+                {
+                    var withRules = TableCellRecovery.Recover(
+                        regionWords, table.BoundingBox, boundaries, ruleYs, pageGroup.Key, table.ColumnAnchors);
+                    if (ruleYs.Count == 0) return withRules;
+
+                    var withoutRules = TableCellRecovery.Recover(
+                        regionWords, table.BoundingBox, boundaries, [], pageGroup.Key, table.ColumnAnchors);
+                    return PreferCompactRows(withRules, withoutRules) ? withoutRules : withRules;
+                }
+
+                var rows = RecoverWithRows(groupBoundaries);
                 if (rows.Count == 0
                     && table.ColumnAnchors.Count > 0
-                    && table.RowAnchors.Count >= table.ColumnAnchors.Count * 2)
+                    && (ruleYs.Count >= 2 || groupBoundaries.Count > 0 || table.RowAnchors.Count >= table.ColumnAnchors.Count * 2))
                 {
-                    rows = TableCellRecovery.Recover(
-                        regionWords, table.BoundingBox, table.ColumnAnchors, ruleYs, pageGroup.Key, table.ColumnAnchors);
+                    rows = RecoverWithRows(table.ColumnAnchors);
                 }
                 if (rows.Count == 0) continue;
 
@@ -1432,6 +1474,28 @@ public sealed class PdfStructParser
             }
         }
     }
+
+    /// <summary>
+    /// Row rules can over-split a table with row spans or wrapped cells. When the
+    /// baseline/continuation path recovers the same or wider schema with clearly
+    /// fewer rows, prefer that compact logical-row model.
+    /// </summary>
+    private static bool PreferCompactRows(
+        IReadOnlyList<Models.TableRow> withRules,
+        IReadOnlyList<Models.TableRow> withoutRules)
+    {
+        if (withoutRules.Count == 0) return false;
+        if (withRules.Count == 0) return true;
+        if (withoutRules.Count + 2 >= withRules.Count) return false;
+        return ColumnCount(withoutRules) >= ColumnCount(withRules);
+    }
+
+    /// <summary>The number of leaf columns a recovered table spans — the widest cell reach across its rows.</summary>
+    private static int ColumnCount(IReadOnlyList<Models.TableRow> rows) =>
+        rows
+            .SelectMany(r => r.Cells)
+            .DefaultIfEmpty()
+            .Max(c => c is null ? 0 : c.ColumnNumber + c.ColumnSpan - 1);
 
     /// <summary>Extracts the page's horizontal, visible words, mirroring the line-extraction letter filters.</summary>
     private List<TableCellRecovery.Word> ExtractPageWords(Page page)
@@ -1476,14 +1540,34 @@ public sealed class PdfStructParser
     private static IReadOnlyList<double> RegionHorizontalRuleYs(
         IReadOnlyList<Models.BoundingBox> horizontalRules, Models.BoundingBox region)
     {
+        const double ruleLevelTolerance = 2.5;
         const double minWidthShare = 0.5;
         var centerY = (Models.BoundingBox r) => (r.Top + r.Bottom) / 2.0;
-        return horizontalRules
+
+        var inside = horizontalRules
             .Where(r => r.Left < region.Right && r.Right > region.Left
-                        && r.Width >= minWidthShare * region.Width
                         && centerY(r) <= region.Top && centerY(r) >= region.Bottom)
-            .Select(centerY)
-            .OrderByDescending(y => y)
+            .OrderByDescending(centerY)
+            .ToList();
+
+        var levels = new List<(double Y, double Left, double Right)>();
+        foreach (var rule in inside)
+        {
+            var y = centerY(rule);
+            if (levels.Count > 0 && levels[^1].Y - y <= ruleLevelTolerance)
+            {
+                var last = levels[^1];
+                levels[^1] = (last.Y, Math.Min(last.Left, rule.Left), Math.Max(last.Right, rule.Right));
+            }
+            else
+            {
+                levels.Add((y, rule.Left, rule.Right));
+            }
+        }
+
+        return levels
+            .Where(l => l.Right - l.Left >= minWidthShare * region.Width)
+            .Select(l => l.Y)
             .ToList();
     }
 

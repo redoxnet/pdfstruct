@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 using PdfStruct.Models;
+using BaselineRow = PdfStruct.Analysis.Tables.TableRowGrouping.BaselineRow;
 using Word = PdfStruct.Analysis.Tables.TableCellRecovery.Word;
 
 namespace PdfStruct.Analysis.Tables;
@@ -30,12 +31,6 @@ namespace PdfStruct.Analysis.Tables;
 /// </remarks>
 internal static class LogicalRowBuilder
 {
-    /// <summary>Two blocks share a baseline when their baselines differ by at most this factor of the smaller font height.</summary>
-    private const double RowBaselineToleranceFactor = 0.4;
-
-    /// <summary>Absolute floor, in PDF points, for the same-baseline tolerance.</summary>
-    private const double MinRowBaselineTolerance = 1.5;
-
     /// <summary>Two word centres within this factor of the word height are the same column.</summary>
     private const double ColumnToleranceFactor = 0.6;
 
@@ -70,48 +65,13 @@ internal static class LogicalRowBuilder
         ArgumentNullException.ThrowIfNull(words);
         ArgumentNullException.ThrowIfNull(horizontalRuleYs);
 
-        var baselineRows = ClusterBaselineRows(words);
+        var baselineRows = TableRowGrouping.ClusterBaselineRows(words);
         if (baselineRows.Count <= 1) return baselineRows.Select(r => r.Words.ToList()).ToList();
 
         if (TryRuleBands(words, region, horizontalRuleYs, baselineRows.Count, out var bandRows))
             return bandRows;
 
         return MergeContinuations(baselineRows);
-    }
-
-    /// <summary>Clusters words into baseline rows, top to bottom.</summary>
-    private static List<Row> ClusterBaselineRows(IReadOnlyList<Word> words)
-    {
-        var ordered = words.OrderByDescending(w => w.BoundingBox.CenterY).ToList();
-        var rows = new List<Row>();
-        var current = new List<Word>();
-        var baseline = 0.0;
-
-        foreach (var word in ordered)
-        {
-            var height = word.BoundingBox.Height;
-            if (current.Count == 0)
-            {
-                current.Add(word);
-                baseline = word.BoundingBox.CenterY;
-                continue;
-            }
-
-            var smaller = Math.Min(current.Min(w => w.BoundingBox.Height), height);
-            var tolerance = Math.Max(MinRowBaselineTolerance, RowBaselineToleranceFactor * smaller);
-            if (baseline - word.BoundingBox.CenterY <= tolerance)
-            {
-                current.Add(word);
-            }
-            else
-            {
-                rows.Add(MakeRow(current));
-                current = [word];
-                baseline = word.BoundingBox.CenterY;
-            }
-        }
-        if (current.Count > 0) rows.Add(MakeRow(current));
-        return rows;
     }
 
     /// <summary>
@@ -150,14 +110,30 @@ internal static class LogicalRowBuilder
         for (var i = 1; i < boundaries.Count; i++) heights.Add(boundaries[i - 1] - boundaries[i]);
         if (CoefficientOfVariation(heights) > MaxBandHeightCv) return false;
 
-        if (buckets.Count(band => band.Count > 0) >= baselineRowCount) return false;
+        bandRows = SplitRuleBands(buckets.Where(band => band.Count > 0).ToList());
+        if (bandRows.Count >= baselineRowCount) return false;
 
-        bandRows = buckets.Where(band => band.Count > 0).ToList();
         return bandRows.Count > 0;
     }
 
+    /// <summary>
+    /// A rule band is usually one logical row, but dense ruled tables sometimes
+    /// omit the interior rule between consecutive body records. Split only when
+    /// multiple baselines in the same band each open the anchor column and at
+    /// least one data column; label-only baselines remain wrapped cell text.
+    /// </summary>
+    private static List<List<Word>> SplitRuleBands(List<List<Word>> bands) =>
+        TableRowGrouping.SplitStackedRecords(bands, band =>
+        {
+            var tolerance = Math.Max(MinColumnTolerance, ColumnToleranceFactor * Median(band.Select(w => w.BoundingBox.Height)));
+            var anchor = band.Min(w => w.BoundingBox.CenterX);
+            return words =>
+                words.Any(w => w.BoundingBox.CenterX <= anchor + tolerance)
+                && words.Any(w => w.BoundingBox.CenterX > anchor + Math.Max(3 * tolerance, 12.0));
+        });
+
     /// <summary>Merges wrapped continuation rows into the row above, leaving new records and finer header levels as their own rows.</summary>
-    private static List<List<Word>> MergeContinuations(List<Row> baselineRows)
+    private static List<List<Word>> MergeContinuations(List<BaselineRow> baselineRows)
     {
         var tolerance = Math.Max(MinColumnTolerance, ColumnToleranceFactor * Median(baselineRows.SelectMany(r => r.Words).Select(w => w.BoundingBox.Height)));
         var stable = StableColumnCenters(baselineRows, tolerance);
@@ -166,7 +142,7 @@ internal static class LogicalRowBuilder
         var anchor = stable[0];
         var medianGap = MedianBaselineGap(baselineRows);
 
-        var groups = new List<List<Row>>();
+        var groups = new List<List<BaselineRow>>();
         foreach (var row in baselineRows)
         {
             if (groups.Count == 0) { groups.Add([row]); continue; }
@@ -189,7 +165,7 @@ internal static class LogicalRowBuilder
     /// or a finer header level (introducing columns the group lacks) fails both
     /// tests and stays a separate row.
     /// </summary>
-    private static bool IsContinuation(Row row, List<Row> group, double anchor, double tolerance)
+    private static bool IsContinuation(BaselineRow row, List<BaselineRow> group, double anchor, double tolerance)
     {
         if (row.Words.Any(w => w.BoundingBox.CenterX <= anchor + tolerance)) return false;
 
@@ -198,7 +174,7 @@ internal static class LogicalRowBuilder
     }
 
     /// <summary>Returns the centres of word columns that recur across baseline rows, left to right.</summary>
-    private static List<double> StableColumnCenters(List<Row> rows, double tolerance)
+    private static List<double> StableColumnCenters(List<BaselineRow> rows, double tolerance)
     {
         var all = new List<(double Center, int Row)>();
         for (var r = 0; r < rows.Count; r++)
@@ -233,15 +209,12 @@ internal static class LogicalRowBuilder
         return stable;
     }
 
-    private static double MedianBaselineGap(List<Row> rows)
+    private static double MedianBaselineGap(List<BaselineRow> rows)
     {
         var gaps = new List<double>();
         for (var i = 1; i < rows.Count; i++) gaps.Add(rows[i - 1].Baseline - rows[i].Baseline);
         return Median(gaps);
     }
-
-    private static Row MakeRow(List<Word> words) =>
-        new(words.Average(w => w.BoundingBox.CenterY), words);
 
     private static double CoefficientOfVariation(List<double> values)
     {
@@ -259,7 +232,4 @@ internal static class LogicalRowBuilder
         var mid = sorted.Count / 2;
         return sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0;
     }
-
-    /// <summary>A baseline-grouped row of words.</summary>
-    private sealed record Row(double Baseline, IReadOnlyList<Word> Words);
 }

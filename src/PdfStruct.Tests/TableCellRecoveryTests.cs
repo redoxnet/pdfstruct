@@ -115,6 +115,76 @@ public class TableCellRecoveryTests
         Assert.All(rows, r => Assert.All(r.Cells, c => Assert.Equal(1, c.ColumnSpan)));
     }
 
+    [Fact]
+    public void Recover_RuledTable_TrimsCompletelyEmptyLeadingSlot()
+    {
+        // A ruled table can carry a decorative or over-wide leading slot before
+        // the real stub column. The recovered model should not preserve a
+        // permanently empty first column, because Markdown would render it as a
+        // blank column with no information.
+        var words = new List<TableCellRecovery.Word>
+        {
+            W("Method", 170, 700, 42), W("SVT", 270, 700, 28), W("IC15", 350, 700, 34),
+            W("ABBYY", 170, 686, 44), W("40.5", 270, 686, 30), W("-", 350, 686, 12),
+            W("Ours", 170, 672, 32), W("94.3", 270, 672, 30), W("68.8", 350, 672, 30),
+        };
+        var region = new BoundingBox(50, 660, 400, 712);
+        var boundaries = new List<double> { 120, 230, 320 };
+
+        var rows = TableCellRecovery.Recover(words, region, boundaries, [], pageNumber: 1);
+
+        Assert.Equal(3, rows.Count);
+        Assert.All(rows, row => Assert.Equal([1, 2, 3], row.Cells.Select(c => c.ColumnNumber).ToArray()));
+    }
+
+    [Fact]
+    public void Recover_RuledTable_SplitsStackedCompleteRecords()
+    {
+        // Dense ruled tables may have a rule band that visually contains more
+        // than one data record. Each baseline that has both a stub label and
+        // value columns must become its own table row.
+        var words = new List<TableCellRecovery.Word>
+        {
+            W("Alice", 90, 705, 34), W("91", 190, 705, 20),
+            W("Bob", 90, 697, 28), W("82", 190, 697, 20),
+            W("Cara", 90, 679, 34), W("77", 190, 679, 20),
+            W("Dana", 90, 657, 34), W("73", 190, 657, 20),
+        };
+        var region = new BoundingBox(60, 646, 230, 712);
+        var boundaries = new List<double> { 140 };
+        var ruleYs = new List<double> { 712, 690, 668, 646 };
+
+        var rows = TableCellRecovery.Recover(words, region, boundaries, ruleYs, pageNumber: 1);
+
+        Assert.Equal(4, rows.Count);
+        Assert.Equal(["Alice", "Bob", "Cara", "Dana"], rows.Select(r => CellText(r.Cells[0])).ToArray());
+        Assert.Equal(["91", "82", "77", "73"], rows.Select(r => CellText(r.Cells[1])).ToArray());
+    }
+
+    [Fact]
+    public void Recover_RuledTable_MergesDashOnlyContinuationIntoPreviousRecord()
+    {
+        // Some PDFs draw placeholder dashes on a slightly lower baseline. They
+        // are empty-value markers for the labelled record above, not standalone
+        // table rows.
+        var words = new List<TableCellRecovery.Word>
+        {
+            W("Alice", 90, 705, 34), W("91", 190, 705, 20),
+            W("-", 250, 697, 12),
+            W("Bob", 90, 679, 28), W("82", 190, 679, 20), W("73", 250, 679, 20),
+        };
+        var region = new BoundingBox(60, 668, 290, 712);
+        var boundaries = new List<double> { 140, 220 };
+        var ruleYs = new List<double> { 712, 701, 690, 668 };
+
+        var rows = TableCellRecovery.Recover(words, region, boundaries, ruleYs, pageNumber: 1);
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("Alice", CellText(rows[0].Cells[0]));
+        Assert.Equal("-", CellText(rows[0].Cells[2]));
+        Assert.Equal("Bob", CellText(rows[1].Cells[0]));
+    }
+
     private static string CellText(TableCell cell) =>
         string.Join(" ", cell.Kids.OfType<ParagraphElement>().Select(p => p.Text.Content));
 

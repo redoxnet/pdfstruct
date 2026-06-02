@@ -71,6 +71,12 @@ internal static class TextAwareRuledTableDetector
     /// <summary>A header-band cell's median text length bound; a merged header label is terse, while a wrapped prose line drifting above the table is far longer.</summary>
     public const int MaxHeaderCellTextLength = 30;
 
+    /// <summary>
+    /// A ruled margin wider than this many points, with no payload text in it,
+    /// is considered decorative overhang rather than an informative table column.
+    /// </summary>
+    private const double EmptyRuleMarginMinPoints = 24.0;
+
     private static readonly Regex CaptionPattern = new(
         @"^\s*(Table|Tab\.|Figure|Fig\.|표|그림|도)\s*\d",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -321,10 +327,35 @@ internal static class TextAwareRuledTableDetector
             foreach (var row in runRows)
                 foreach (var cell in row.Cells)
                     box = box.Merge(cell.BoundingBox);
+            box = TrimEmptyRuleMargins(box, runRows, tolerance);
 
             yield return new DetectedTable(box, "ruled");
             start = end + 1;
         }
+    }
+
+    /// <summary>
+    /// Shrinks a large empty left rule overhang. Most ruled tables have a small
+    /// 6–7pt border padding between the rule and the first text; a much wider left
+    /// gap is usually an empty drawn slot that should not make the detected table
+    /// start before its real columns. Only the left side is trimmed: a short last
+    /// column legitimately leaves a wide gap to the right rule, so trimming there
+    /// would cut real table width.
+    /// </summary>
+    private static BoundingBox TrimEmptyRuleMargins(BoundingBox box, IReadOnlyList<Row> rows, double tolerance)
+    {
+        var cells = rows.SelectMany(r => r.Cells).ToList();
+        if (cells.Count == 0) return box;
+
+        var contentLeft = cells.Min(c => c.Left);
+        var threshold = Math.Max(EmptyRuleMarginMinPoints, 3.0 * tolerance);
+        var padding = Math.Max(2.0, tolerance);
+
+        var left = box.Left;
+        if (contentLeft - left > threshold)
+            left = Math.Max(left, contentLeft - padding);
+
+        return new BoundingBox(left, box.Bottom, box.Right, box.Top);
     }
 
     /// <summary>Counts rows whose cells fall into two or more distinct columns.</summary>

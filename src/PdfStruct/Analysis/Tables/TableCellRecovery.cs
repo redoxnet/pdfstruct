@@ -83,7 +83,7 @@ internal static class TableCellRecovery
         ArgumentNullException.ThrowIfNull(horizontalRuleYs);
         if (words.Count == 0) return [];
 
-        var rowWords = LogicalRowBuilder.Build(words, region, horizontalRuleYs);
+        var rowWords = MergeDashOnlyContinuations(SplitStackedRecordRows(LogicalRowBuilder.Build(words, region, horizontalRuleYs)));
         var bands = BuildBands(region, groupBoundaries);
         var tolerance = Math.Max(MinColumnCenterTolerance, ColumnCenterToleranceFactor * Median(words.Select(w => w.BoundingBox.Height)));
 
@@ -101,7 +101,75 @@ internal static class TableCellRecovery
             if (row.Cells.Count > 0) rows.Add(row);
         }
 
-        return IsConfidentGrid(rows) ? rows : [];
+        NormalizeLeadingEmptyColumns(rows);
+        if (IsConfidentGrid(rows)) return rows;
+
+        var slotRows = RecoverFromRuledSlots(rowWords, region, groupBoundaries, pageNumber);
+        NormalizeLeadingEmptyColumns(slotRows);
+        return IsConfidentGrid(slotRows) ? slotRows : [];
+    }
+
+    /// <summary>
+    /// Splits dense ruled-table rows where a detector band swallowed adjacent
+    /// records. A stacked baseline is a new record only when it opens the
+    /// leftmost label area and also carries values in later columns; label-only
+    /// continuation lines stay with the row above.
+    /// </summary>
+    private static List<List<Word>> SplitStackedRecordRows(List<List<Word>> rows) =>
+        TableRowGrouping.SplitStackedRecords(rows, row =>
+        {
+            var tolerance = Math.Max(MinColumnCenterTolerance, ColumnCenterToleranceFactor * Median(row.Select(w => w.BoundingBox.Height)));
+            var firstValueCenter = FirstValueColumnCenter(row);
+            var anchorLimit = firstValueCenter is null
+                ? row.Min(w => w.BoundingBox.CenterX) + tolerance
+                : firstValueCenter.Value - Math.Max(3 * tolerance, 12.0);
+            return words => OpensRecord(words, anchorLimit, firstValueCenter, tolerance);
+        });
+
+    /// <summary>Returns the centre of the leftmost short-value word in the row, or <c>null</c> when the row carries none.</summary>
+    private static double? FirstValueColumnCenter(IReadOnlyList<Word> words)
+    {
+        var values = words
+            .Where(w => LooksLikeShortValue(w.Text))
+            .Select(w => w.BoundingBox.CenterX)
+            .OrderBy(x => x)
+            .ToList();
+        return values.Count == 0 ? null : values[0];
+    }
+
+    /// <summary>True when a baseline opens a new record: it carries a label in the anchor area and a value in a later column.</summary>
+    private static bool OpensRecord(IReadOnlyList<Word> words, double anchorLimit, double? firstValueCenter, double tolerance)
+    {
+        var hasAnchor = words.Any(w => w.BoundingBox.CenterX <= anchorLimit && w.Text.Any(char.IsLetter));
+        var hasDataColumn = firstValueCenter is null
+            ? words.Any(w => w.BoundingBox.CenterX > anchorLimit + Math.Max(3 * tolerance, 12.0))
+            : words.Any(w => w.BoundingBox.CenterX >= firstValueCenter.Value - tolerance);
+        return hasAnchor && hasDataColumn;
+    }
+
+    /// <summary>Merges a row made entirely of dashes into the row above — placeholder empty-value markers drawn on a lower baseline, not a record of their own.</summary>
+    private static List<List<Word>> MergeDashOnlyContinuations(List<List<Word>> rows)
+    {
+        var result = new List<List<Word>>();
+        foreach (var row in rows)
+        {
+            if (result.Count > 0 && row.Count > 0 && row.All(w => IsDash(w.Text)))
+            {
+                result[^1].AddRange(row);
+                continue;
+            }
+
+            result.Add(row);
+        }
+
+        return result;
+    }
+
+    /// <summary>True when the text is a single dash glyph (hyphen, en dash, or em dash).</summary>
+    private static bool IsDash(string text)
+    {
+        var trimmed = text.Trim();
+        return trimmed is "-" or "–" or "—";
     }
 
     /// <summary>
@@ -123,6 +191,25 @@ internal static class TableCellRecovery
             else if (i > lastSpan + 1) break;
         }
         return sawSpan ? Math.Min(lastSpan + 2, rows.Count) : 1;
+    }
+
+    /// <summary>
+    /// Removes structural columns at the left edge that no recovered cell covers.
+    /// A ruled detector may include a wide empty margin or a decorative leading
+    /// slot in the region; keeping it would render a permanently blank first
+    /// Markdown column without adding table information.
+    /// </summary>
+    private static void NormalizeLeadingEmptyColumns(List<TableRow> rows)
+    {
+        var firstCovered = rows
+            .SelectMany(r => r.Cells)
+            .DefaultIfEmpty()
+            .Min(c => c is null ? int.MaxValue : c.ColumnNumber);
+        if (firstCovered <= 1 || firstCovered == int.MaxValue) return;
+
+        var shift = firstCovered - 1;
+        foreach (var cell in rows.SelectMany(r => r.Cells))
+            cell.ColumnNumber -= shift;
     }
 
     /// <summary>
@@ -349,12 +436,57 @@ internal static class TableCellRecovery
         }
     }
 
+    /// <summary>
+    /// Conservative fallback for ruled tables: when drawn vertical separators
+    /// already define column slots, place each word into its containing x-range
+    /// instead of rediscovering leaf columns from repeated word centres.
+    /// </summary>
+    private static List<TableRow> RecoverFromRuledSlots(
+        List<List<Word>> rowWords,
+        BoundingBox region,
+        IReadOnlyList<double> columnBoundaries,
+        int pageNumber)
+    {
+        var edges = new List<double> { region.Left };
+        edges.AddRange(columnBoundaries
+            .Where(x => x > region.Left + InteriorMargin && x < region.Right - InteriorMargin)
+            .OrderBy(x => x));
+        edges.Add(region.Right);
+        if (edges.Count < 3) return [];
+
+        var rows = new List<TableRow>();
+        var rowNumber = 0;
+        foreach (var inRow in rowWords)
+        {
+            if (inRow.Count == 0) continue;
+            rowNumber++;
+
+            var bySlot = new List<Word>[edges.Count - 1];
+            for (var i = 0; i < bySlot.Length; i++) bySlot[i] = [];
+            foreach (var word in inRow)
+            {
+                var slot = SlotIndex(word.BoundingBox.CenterX, edges);
+                if (slot >= 0) bySlot[slot].Add(word);
+            }
+
+            var row = new TableRow { RowNumber = rowNumber };
+            for (var slot = 0; slot < bySlot.Length; slot++)
+                if (bySlot[slot].Count > 0)
+                    row.Cells.Add(MakeCell(bySlot[slot].OrderBy(w => w.BoundingBox.CenterX).ToList(), rowNumber, slot + 1, 1, pageNumber));
+            if (row.Cells.Count > 0) rows.Add(row);
+        }
+
+        return rows;
+    }
+
     /// <summary>Builds a cell from the words it holds, joined in reading order.</summary>
     private static TableCell MakeCell(List<Word> words, int rowNumber, int columnNumber, int columnSpan, int pageNumber)
     {
         var box = words[0].BoundingBox;
         foreach (var word in words.Skip(1)) box = box.Merge(word.BoundingBox);
-        var text = string.Join(" ", words.Select(w => w.Text.Trim()).Where(t => t.Length > 0));
+        var text = string.Join(" ", WordsInReadingOrder(words)
+            .Select(w => w.Text.Trim())
+            .Where(t => t.Length > 0));
 
         return new TableCell
         {
@@ -389,11 +521,27 @@ internal static class TableCellRecovery
         return best;
     }
 
+    /// <summary>Returns the index of the column slot whose edge range contains the given x, or -1 when none does. The last slot includes its right edge.</summary>
+    private static int SlotIndex(double centerX, IReadOnlyList<double> edges)
+    {
+        for (var i = 0; i < edges.Count - 1; i++)
+        {
+            var isLast = i == edges.Count - 2;
+            if (centerX >= edges[i] && (centerX < edges[i + 1] || isLast && centerX <= edges[i + 1]))
+                return i;
+        }
+        return -1;
+    }
+
     private static bool InBand(Word word, Band band)
     {
         var center = word.BoundingBox.CenterX;
         return center >= band.Left && center < band.Right;
     }
+
+    /// <summary>Orders a cell's words in reading order — top baseline first, then left to right within each baseline — so a wrapped cell reads correctly.</summary>
+    private static IEnumerable<Word> WordsInReadingOrder(IReadOnlyList<Word> words) =>
+        TableRowGrouping.ClusterBaselineRows(words).SelectMany(row => row.Words.OrderBy(w => w.BoundingBox.CenterX));
 
     private static double Median(IEnumerable<double> values)
     {

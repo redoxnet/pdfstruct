@@ -115,6 +115,26 @@ public class TextAwareRuledTableDetectorTests
         Assert.True(region.BoundingBox.Width > 250, "Region should span the ruled grid.");
     }
 
+    [Fact]
+    public void Detect_WideLeadingRuleOverhang_TrimsToPayloadStart()
+    {
+        // 1901 page 12 Table 9 has horizontal rules that start far left of the
+        // real payload. Other tables have only ordinary border padding; this
+        // wide empty overhang should not become a blank first table column.
+        var rules = new[] { HRule(50, 400, 200), HRule(50, 400, 170), HRule(50, 400, 140) };
+        var lines = new List<TextLineBlock>
+        {
+            Cell("Method", 140, 185), Cell("SVT", 240, 185), Cell("IC15", 330, 185),
+            Cell("ABBYY", 140, 158), Cell("40.5", 240, 158), Cell("-", 330, 158),
+            Cell("Ours", 140, 148), Cell("94.3", 240, 148), Cell("68.8", 330, 148),
+        };
+
+        var region = Assert.Single(TextAwareRuledTableDetector.Detect(lines, rules, []));
+
+        Assert.True(region.BoundingBox.Left > 100, "Wide empty leading rule overhang should be trimmed.");
+        Assert.True(region.BoundingBox.Left <= 140, "Trimmed box must still include the first payload column.");
+    }
+
     private static BoundingBox HRule(double left, double right, double y) => new(left, y, right, y + 0.5);
 
     private static BoundingBox VRule(double x, double bottom, double top) => new(x, bottom, x + 0.5, top);

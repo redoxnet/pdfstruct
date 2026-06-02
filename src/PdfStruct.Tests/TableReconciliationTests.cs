@@ -66,6 +66,8 @@ public class TableReconciliationTests
 
         var table = doc.Kids.OfType<TableElement>()
             .Single(t => t.PageNumber == 6 && t.NumberOfColumns == 3);
+        Assert.True(caption.Id < table.Id);
+        Assert.Equal(table.Id, caption.LinkedContentId);
         var cellTexts = table.Rows
             .SelectMany(r => r.Cells)
             .SelectMany(c => c.Kids.OfType<ParagraphElement>())
@@ -103,6 +105,41 @@ public class TableReconciliationTests
         Assert.Contains(nonTableText, text => text.Contains(doi, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Parse_UtilizingLlm_RuledTablesRecoverCells()
+    {
+        var doc = ParseFixture("plos_utilizing_llm.pdf");
+
+        var tables = doc.Kids.OfType<TableElement>().ToList();
+        Assert.Equal(5, tables.Count);
+        Assert.All(tables, table =>
+        {
+            Assert.NotEmpty(table.Rows);
+            Assert.Empty(table.TextLines);
+            Assert.True(table.NumberOfRows >= 4);
+            Assert.True(table.NumberOfColumns >= 3);
+        });
+    }
+
+    [Fact]
+    public void Parse_GameBasedEducation_RuledResultTablesRecoverCells()
+    {
+        var doc = ParseFixture("plos_game_based_education.pdf");
+
+        var tables = doc.Kids.OfType<TableElement>().ToList();
+        Assert.Equal(5, tables.Count);
+        Assert.Equal(4, tables.Count(t => t.Rows.Count > 0));
+        Assert.Single(tables, t => t.Rows.Count == 0);
+
+        var beck = tables.Single(t => t.Rows
+            .SelectMany(r => r.Cells)
+            .Any(c => CellText(c).Contains("Beck Anxiety Inventory", StringComparison.Ordinal)));
+        Assert.Equal(3, beck.NumberOfRows);
+        Assert.Equal(6, beck.NumberOfColumns);
+        Assert.Contains(beck.Rows.SelectMany(r => r.Cells), c => CellText(c) == "Post-test");
+        Assert.Contains(beck.Rows.SelectMany(r => r.Cells), c => CellText(c).Contains("−7.04", StringComparison.Ordinal));
+    }
+
     private static string ElementText(ContentElement element) => element switch
     {
         ParagraphElement p => p.Text.Content,
@@ -111,6 +148,9 @@ public class TableReconciliationTests
         HeadingElement h => h.Text.Content,
         _ => string.Empty
     };
+
+    private static string CellText(TableCell cell) =>
+        string.Join(" ", cell.Kids.OfType<ParagraphElement>().Select(p => p.Text.Content));
 
     private static PdfDocument ParseFixture(string fixtureName)
     {

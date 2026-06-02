@@ -94,6 +94,29 @@ public class LogicalRowBuilderTests
         Assert.Contains("label", rows[0].Select(w => w.Text));
     }
 
+    [Fact]
+    public void Build_RuledGrid_SplitsMultipleCompleteRecordsInsideOneBand()
+    {
+        // Dense tables may omit the rule between adjacent body rows. If each
+        // baseline opens the row-label column and carries data columns, they are
+        // separate records, not a wrapped cell.
+        var ruleYs = new List<double> { 712, 690, 668, 646 };
+        var words = new List<TableCellRecovery.Word>
+        {
+            W("Alice", 80, 705), W("91", 200, 705),
+            W("Bob", 80, 697), W("82", 200, 697),
+            W("Cara", 80, 679), W("77", 200, 679),
+            W("Dana", 80, 657), W("73", 200, 657),
+        };
+        var region = new BoundingBox(60, 646, 260, 712);
+
+        var rows = LogicalRowBuilder.Build(words, region, ruleYs);
+
+        Assert.Equal(4, rows.Count);
+        Assert.Equal(["Alice", "91"], rows[0].Select(w => w.Text).ToArray());
+        Assert.Equal(["Bob", "82"], rows[1].Select(w => w.Text).ToArray());
+    }
+
     private static TableCellRecovery.Word W(string text, double centerX, double centerY, double width = 24, double height = 8) =>
         new(new BoundingBox(centerX - width / 2, centerY - height / 2, centerX + width / 2, centerY + height / 2), text);
 }
