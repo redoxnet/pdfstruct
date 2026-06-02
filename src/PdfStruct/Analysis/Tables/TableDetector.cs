@@ -29,16 +29,21 @@ internal static class TableDetector
     {
         ArgumentNullException.ThrowIfNull(ruled);
         ArgumentNullException.ThrowIfNull(borderless);
-        if (ruled.Count == 0) return borderless;
-        if (borderless.Count == 0) return ruled;
 
-        // Ruled regions take priority; then add any region — ruled or borderless —
-        // that does not substantially overlap one already kept, so a table sensed
-        // twice (two rule groups, or rules and text both) is reported once.
+        // Ruled regions are considered first, so a table sensed by both its rules
+        // and its text keeps the ruled kind. Any region — from either source, or
+        // two ruled regions for the one table whose rules split into width-disjoint
+        // stacks — that substantially overlaps a kept region is fused into it by
+        // union, so the table is reported once and spans all its parts.
         var merged = new List<DetectedTable>();
         foreach (var region in ruled.Concat(borderless))
-            if (!merged.Any(kept => Overlaps(kept.BoundingBox, region.BoundingBox)))
+        {
+            var index = merged.FindIndex(kept => Overlaps(kept.BoundingBox, region.BoundingBox));
+            if (index < 0)
                 merged.Add(region);
+            else
+                merged[index] = merged[index] with { BoundingBox = merged[index].BoundingBox.Merge(region.BoundingBox) };
+        }
         return merged;
     }
 

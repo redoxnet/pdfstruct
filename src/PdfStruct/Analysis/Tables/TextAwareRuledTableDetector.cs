@@ -47,6 +47,9 @@ internal static class TextAwareRuledTableDetector
     /// <summary>Two horizontal rules share a stack when their horizontal extents overlap by at least this share of the shorter.</summary>
     public const double StackOverlapShare = 0.5;
 
+    /// <summary>Two horizontal segments on the same grid line are joined when the horizontal gap between them is at most this many points — the width of the column separator they were broken at.</summary>
+    public const double CollinearRuleGap = 4.0;
+
     /// <summary>A cell joins a column when its left edge is within this factor of the font size of the column's anchor.</summary>
     public const double ColumnToleranceFactor = 0.33;
 
@@ -64,6 +67,9 @@ internal static class TextAwareRuledTableDetector
 
     /// <summary>At least this share of a run's rows must span multiple columns, unless interior vertical rules witness the grid; below it the run is a multi-column page layout, not a table.</summary>
     public const double MinMultiColumnRowShare = 0.5;
+
+    /// <summary>A header-band cell's median text length bound; a merged header label is terse, while a wrapped prose line drifting above the table is far longer.</summary>
+    public const int MaxHeaderCellTextLength = 30;
 
     private static readonly Regex CaptionPattern = new(
         @"^\s*(Table|Tab\.|Figure|Fig\.|표|그림|도)\s*\d",
@@ -114,11 +120,50 @@ internal static class TextAwareRuledTableDetector
         var rows = GroupIntoRows(lines);
         var regions = new List<DetectedTable>();
 
-        foreach (var stack in BuildRuleStacks(horizontalRules))
+        foreach (var stack in BuildRuleStacks(MergeCollinearHorizontalRules(horizontalRules)))
             foreach (var segment in SplitAtCaptionBarriers(stack, rows))
                 regions.AddRange(ConvertSegmentToRegions(segment, rows, verticalRules));
 
         return regions;
+    }
+
+    /// <summary>
+    /// Fuses horizontal rule segments that lie on the same grid line into one
+    /// full-width rule. A shaded or cell-bordered table draws each row's rule as
+    /// separate left and right segments broken at the column separator; left
+    /// split, the segments build into separate width-disjoint stacks, so one
+    /// table is reported twice (overlapping) or loses the column whose segment
+    /// stack failed validation. Joining collinear segments first makes the table
+    /// a single full-width stack spanning all its columns.
+    /// </summary>
+    private static List<BoundingBox> MergeCollinearHorizontalRules(IReadOnlyList<BoundingBox> rules)
+    {
+        var ordered = rules.OrderByDescending(RuleCenter).ToList();
+        var merged = new List<BoundingBox>();
+        var used = new bool[ordered.Count];
+
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            if (used[i]) continue;
+            var level = new List<BoundingBox> { ordered[i] };
+            used[i] = true;
+            for (var j = i + 1; j < ordered.Count; j++)
+                if (!used[j] && Math.Abs(RuleCenter(ordered[j]) - RuleCenter(ordered[i])) <= RuleMaxThickness)
+                {
+                    level.Add(ordered[j]);
+                    used[j] = true;
+                }
+
+            var segments = level.OrderBy(s => s.Left).ToList();
+            var current = segments[0];
+            foreach (var segment in segments.Skip(1))
+            {
+                if (segment.Left - current.Right <= CollinearRuleGap) current = current.Merge(segment);
+                else { merged.Add(current); current = segment; }
+            }
+            merged.Add(current);
+        }
+        return merged;
     }
 
     /// <summary>Groups horizontal rules that share a horizontal extent into vertically ordered stacks.</summary>
@@ -132,8 +177,31 @@ internal static class TextAwareRuledTableDetector
             if (stack is null) stacks.Add([rule]);
             else stack.Add(rule);
         }
-        return stacks.Where(s => s.Count >= 2).ToList();
+        return stacks.Select(CollapseCoincidentRules).Where(s => s.Count >= 2).ToList();
     }
+
+    /// <summary>
+    /// Fuses rules at the same vertical position into one. A single ruled line is
+    /// often drawn as two near-coincident segments (a doubled <c>\hline</c>, or a
+    /// full-width rule plus a partial one over a spanned cell); left split, the
+    /// zero-height gap between them reads as a non-tabular gap and severs the
+    /// table's header from its body.
+    /// </summary>
+    private static List<BoundingBox> CollapseCoincidentRules(List<BoundingBox> stack)
+    {
+        var collapsed = new List<BoundingBox>();
+        foreach (var rule in stack)
+        {
+            if (collapsed.Count > 0 &&
+                Math.Abs(RuleCenter(collapsed[^1]) - RuleCenter(rule)) <= RuleMaxThickness)
+                collapsed[^1] = collapsed[^1].Merge(rule);
+            else
+                collapsed.Add(rule);
+        }
+        return collapsed;
+    }
+
+    private static double RuleCenter(BoundingBox rule) => (rule.Top + rule.Bottom) / 2.0;
 
     /// <summary>Splits a rule stack into segments wherever a caption line falls between two of its rules — a caption separates two tables.</summary>
     private static IEnumerable<List<BoundingBox>> SplitAtCaptionBarriers(List<BoundingBox> stack, List<Row> rows)
@@ -174,15 +242,33 @@ internal static class TextAwareRuledTableDetector
         var left = rules.Min(r => r.Left);
         var right = rules.Max(r => r.Right);
 
+        // Clip every candidate row to the rule's horizontal extent before use.
+        // Page-wide line grouping merges a table row with an adjacent prose line
+        // in the other column whenever their baselines fall within tolerance;
+        // left whole, the merged row's centre lands in the gutter and the row —
+        // or the entire table, when every row is so merged — drops out. Keeping
+        // only the in-extent cells recovers the table and stops its box from
+        // growing sideways into the neighbouring column.
         var payload = rows
-            .Where(r => r.Baseline <= top && r.Baseline >= bottom && HorizontallyInside(r, left, right) && !IsCaptionRow(r))
+            .Where(r => r.Baseline <= top && r.Baseline >= bottom)
+            .Select(r => ClipRowToExtent(r, left, right))
+            .OfType<Row>()
+            .Where(r => !IsCaptionRow(r))
             .ToList();
         if (payload.Count < MinPayloadRows) yield break;
 
         var fontSize = Median(payload.SelectMany(r => r.Cells).Select(c => c.FontSize));
         if (fontSize <= 0) yield break;
         var tolerance = ColumnToleranceFactor * fontSize;
-        var anchors = ClusterAnchors(payload.SelectMany(r => r.Cells).Select(c => c.Left), tolerance);
+
+        // Columns are witnessed by the cell text where it gap-split, and by the
+        // interior vertical rules regardless — a shaded grid whose cell text never
+        // split would otherwise show too few text anchors and be rejected.
+        var ruleColumns = verticalRules
+            .Where(rule => rule.Top > bottom && rule.Bottom < top && rule.Left >= left - tolerance && rule.Right <= right + tolerance)
+            .Select(rule => rule.Left);
+        var anchors = ClusterAnchors(
+            payload.SelectMany(r => r.Cells).Select(c => c.Left).Concat(ruleColumns), tolerance);
         if (anchors.Count < MinColumns) yield break;
 
         // A gap between two consecutive rules is tabular when the text rows it
@@ -258,27 +344,51 @@ internal static class TextAwareRuledTableDetector
         if (anchors.Count < MinColumns) return top;
 
         var above = rows
-            .Where(r => r.Baseline > top && HorizontallyInside(r, left, right))
+            .Where(r => r.Baseline > top)
+            .Select(r => ClipRowToExtent(r, left, right))
+            .OfType<Row>()
             .OrderBy(r => r.Baseline)
             .ToList();
 
         var headerTop = top;
         foreach (var row in above)
         {
-            if (IsCaptionRow(row)) break;
-            var aligned = row.Cells.Count(c => NearestColumn(c.Left, anchors, tolerance) >= 0);
-            if (aligned < MinColumns) break;
+            if (IsCaptionRow(row) || !IsHeaderRow(row, anchors, tolerance)) break;
             headerTop = Math.Max(headerTop, row.Cells.Max(c => c.BoundingBox.Top));
         }
         return headerTop;
     }
 
+    /// <summary>
+    /// A header-band row above the body: every cell either aligns to a body
+    /// column or spans two or more of them (a merged group label such as
+    /// "Type Configurations Size" that never gap-split), and the row reads as
+    /// terse header tokens rather than a wrapped prose line drifting above the
+    /// table.
+    /// </summary>
+    private static bool IsHeaderRow(Row row, List<double> anchors, double tolerance)
+    {
+        if (row.Cells.Count == 0) return false;
+        if (Median(row.Cells.Select(c => (double)c.Text.Length)) > MaxHeaderCellTextLength) return false;
+
+        foreach (var cell in row.Cells)
+        {
+            var aligns = NearestColumn(cell.Left, anchors, tolerance) >= 0;
+            var spans = anchors.Count(a => a >= cell.Left - tolerance && a <= cell.Right + tolerance) >= 2;
+            if (!aligns && !spans) return false;
+        }
+        return true;
+    }
+
     private static bool IsCaptionRow(Row row) => CaptionPattern.IsMatch(row.Text);
 
-    private static bool HorizontallyInside(Row row, double left, double right)
+    /// <summary>Returns the row's cells whose centre falls within the rule extent, or <c>null</c> when none do.</summary>
+    private static Row? ClipRowToExtent(Row row, double left, double right)
     {
-        var center = (row.Left + row.Right) / 2.0;
-        return center >= left && center <= right;
+        var inside = row.Cells
+            .Where(c => (c.Left + c.Right) / 2.0 >= left && (c.Left + c.Right) / 2.0 <= right)
+            .ToList();
+        return inside.Count == 0 ? null : MakeRow(inside);
     }
 
     private static double XOverlapShare(BoundingBox a, BoundingBox b)
@@ -388,7 +498,5 @@ internal static class TextAwareRuledTableDetector
     private sealed record Row(double Baseline, double FontSize, IReadOnlyList<TextLineBlock> Cells)
     {
         public string Text => string.Join(" ", Cells.OrderBy(c => c.Left).Select(c => c.Text));
-        public double Left => Cells.Min(c => c.Left);
-        public double Right => Cells.Max(c => c.Right);
     }
 }

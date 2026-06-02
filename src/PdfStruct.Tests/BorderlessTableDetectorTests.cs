@@ -107,6 +107,40 @@ public class BorderlessTableDetectorTests
     }
 
     [Fact]
+    public void Detect_NumberedDisplayEquation_Rejected()
+    {
+        // A display equation: scattered symbolic fragments, a flush-right equation
+        // number, and no numeric data column — not a table (1901 page 6).
+        var lines = new List<TextLineBlock>
+        {
+            Cell("s = GRU", 109, 160, width: 58), Cell("prev t", 168, 160, width: 40),
+            Cell("g s", 200, 160, width: 20), Cell("(5)", 274, 160, width: 14),
+            Cell("where y", 50, 134, width: 38), Cell("prev", 90, 134, width: 16),
+            Cell("denotes the vectors", 110, 134, width: 176),
+            Cell("previous y", 50, 120, width: 80), Cell("t-1", 131, 120, width: 28),
+            Cell("and g glimpse", 150, 120, width: 130),
+        };
+
+        Assert.Empty(BorderlessTableDetector.Detect(lines));
+    }
+
+    [Fact]
+    public void Detect_NumericTableWithStrayEquationNumber_StillDetected()
+    {
+        // A genuine numeric table carrying a lone "(1)" marker keeps its numeric
+        // data column, so the formula guard does not fire.
+        var lines = new List<TextLineBlock>
+        {
+            Cell("Model", 50, 160), Cell("Acc", 120, 160), Cell("F1", 200, 160),
+            Cell("A", 50, 146), Cell("87.5", 120, 146), Cell("0.81", 200, 146),
+            Cell("B", 50, 132), Cell("90.1", 120, 132), Cell("0.88", 200, 132),
+            Cell("note", 50, 118), Cell("see", 120, 118), Cell("(1)", 200, 118),
+        };
+
+        Assert.NotEmpty(BorderlessTableDetector.Detect(lines));
+    }
+
+    [Fact]
     public void Parse_RulesOnlyFixture_EmitsNoTables()
     {
         var result = ParseFixture("kr_constitution.pdf");

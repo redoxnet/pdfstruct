@@ -32,5 +32,23 @@ public class TableDetectorTests
         Assert.Equal("ruled", region.Kind);
     }
 
+    [Fact]
+    public void Merge_TwoOverlappingRuledRegions_FusedEvenWithNoBorderless()
+    {
+        // One table whose rules split into two width-disjoint stacks must be
+        // reported once, spanning the union — self-dedup is not skipped just
+        // because the borderless list is empty.
+        var ruled = new[]
+        {
+            Region(new BoundingBox(57, 322, 399, 743), "ruled"),
+            Region(new BoundingBox(78, 267, 539, 743), "ruled"),
+        };
+
+        var region = Assert.Single(TableDetector.Merge(ruled, []));
+        Assert.Equal(57, region.BoundingBox.Left);
+        Assert.Equal(539, region.BoundingBox.Right);
+        Assert.Equal(267, region.BoundingBox.Bottom);
+    }
+
     private static DetectedTable Region(BoundingBox box, string kind) => new(box, kind);
 }

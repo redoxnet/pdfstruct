@@ -71,6 +71,12 @@ internal static class BorderlessTableDetector
         @"^\s*(Table|Tab\.|Figure|Fig\.|표|그림|도)\s*\d",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>A flush-right display-equation number such as <c>(5)</c> or <c>(12a)</c>.</summary>
+    private static readonly Regex EquationNumberPattern = new(@"^\(\d+[a-z]?\)$", RegexOptions.Compiled);
+
+    /// <summary>A data cell that is a bare number, percentage, or signed value — the payload of a numeric table.</summary>
+    private static readonly Regex NumericCellPattern = new(@"^[+\-±]?\d[\d.,]*%?$", RegexOptions.Compiled);
+
     /// <summary>
     /// Detects borderless table regions within a single column slab.
     /// </summary>
@@ -113,7 +119,8 @@ internal static class BorderlessTableDetector
             var tabularCount = 0;
             for (var k = i0; k <= lastTabular; k++) if (tabular[k]) tabularCount++;
 
-            if (tabularCount >= MinTabularRows && TryRegionBounds(rows, i0, lastTabular, out var box))
+            if (tabularCount >= MinTabularRows && !IsFormulaCluster(rows, i0, lastTabular)
+                && TryRegionBounds(rows, i0, lastTabular, out var box))
                 regions.Add(new DetectedTable(box, "borderless"));
 
             i0 = lastTabular + 1;
@@ -258,6 +265,30 @@ internal static class BorderlessTableDetector
         foreach (var c in stripped)
             if (c is not ('.' or '·' or '…' or '•' or '‥' or '⋯' or '∙')) return false;
         return true;
+    }
+
+    /// <summary>
+    /// True when the cluster is a numbered display equation, not a table. The
+    /// decisive joint evidence: a flush-right equation number <c>(N)</c> on some
+    /// row, together with the absence of a numeric data matrix — a real numeric
+    /// table carries a column of numbers, whereas an equation block scatters
+    /// symbolic fragments and ends a line in its equation number. A footnote
+    /// marker stray in a genuine data table is harmless because the numeric
+    /// payload then keeps the guard from firing.
+    /// </summary>
+    private static bool IsFormulaCluster(List<Row> rows, int first, int last)
+    {
+        var hasEquationNumber = false;
+        var numericCells = 0;
+        for (var k = first; k <= last; k++)
+        {
+            var cells = rows[k].Cells;
+            if (cells.Count == 0) continue;
+            if (EquationNumberPattern.IsMatch(cells[^1].Text.Replace(" ", ""))) hasEquationNumber = true;
+            foreach (var cell in cells)
+                if (NumericCellPattern.IsMatch(cell.Text.Trim())) numericCells++;
+        }
+        return hasEquationNumber && numericCells < MinColumns;
     }
 
     /// <summary>A row is tabular when it has several short, gap-separated cells.</summary>
