@@ -210,7 +210,38 @@ internal static class DebugImageRenderer
 
         canvas.DrawRect(rect, fill);
         canvas.DrawRect(rect, stroke);
+
+        // Reveal the structure we actually assert: a grid table's confident column
+        // anchors (drawn vertical rules, or stable text columns) as guide lines.
+        // A region/block asserts no columns, so nothing is drawn inside it — an
+        // uncertain column is never visualised as if it were real structure.
+        if (element is TableElement table && table.ColumnAnchors.Count > 0)
+        {
+            DrawColumnGuides(canvas, table, rect, mediaBoxLeft, scale, color);
+        }
+
         DrawLabel(canvas, rect, element, color);
+    }
+
+    /// <summary>Draws dashed vertical guides at a grid table's confident column anchors, clipped to its bounding box.</summary>
+    private static void DrawColumnGuides(
+        SKCanvas canvas, TableElement table, SKRect rect, double mediaBoxLeft, float scale, SKColor color)
+    {
+        using var guide = new SKPaint
+        {
+            Color = color.WithAlpha(160),
+            IsAntialias = true,
+            StrokeWidth = Math.Max(1, scale * 0.6f),
+            Style = SKPaintStyle.Stroke,
+            PathEffect = SKPathEffect.CreateDash([scale * 4, scale * 3], 0)
+        };
+
+        foreach (var anchor in table.ColumnAnchors)
+        {
+            var x = (float)((anchor - mediaBoxLeft) * scale);
+            if (x <= rect.Left || x >= rect.Right) continue;
+            canvas.DrawLine(x, rect.Top, x, rect.Bottom, guide);
+        }
     }
 
     /// <summary>Draws the <c>{id}:{type}</c> label tab above an element's bounding box.</summary>
@@ -267,6 +298,7 @@ internal static class DebugImageRenderer
             "heading" => new SKColor(214, 69, 65),
             "paragraph" => new SKColor(45, 120, 210),
             "table" => new SKColor(38, 166, 91),
+            "region" => new SKColor(127, 140, 141),
             "list" => new SKColor(142, 68, 173),
             "image" => new SKColor(90, 90, 90),
             "caption" => new SKColor(230, 126, 34),

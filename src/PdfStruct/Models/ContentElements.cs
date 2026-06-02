@@ -98,6 +98,16 @@ public sealed class TableElement : ContentElement
     public List<TableRow> Rows { get; set; } = [];
 
     /// <summary>
+    /// Gets or sets the x-positions, in PDF user space, of the columns the
+    /// detector is confident about — interior vertical rules where the table is
+    /// ruled, or the stable text column anchors where it is borderless. Asserted
+    /// only for a grid; a <see cref="RegionElement"/> records none. Used to reveal
+    /// the structure being claimed (e.g. in debug overlays); a column we are not
+    /// confident about is never recorded, so no false structure is shown.
+    /// </summary>
+    public List<double> ColumnAnchors { get; set; } = [];
+
+    /// <summary>
     /// Gets or sets the table's raw text rows, top to bottom, captured from the
     /// text lines that fall inside the table region. The region claims this text
     /// so it is not also emitted as overlapping sibling paragraphs; it is
@@ -112,6 +122,22 @@ public sealed class TableElement : ContentElement
 
     /// <summary>Gets or sets the next table fragment ID (cross-page).</summary>
     public int? NextTableId { get; set; }
+}
+
+/// <summary>
+/// A bordered structured region whose internal structure could not be defended
+/// as a grid (<see cref="TableElement"/>) — for example a key-value form or
+/// front matter whose rules separate sections rather than repeating rows. Its
+/// claimed text is preserved verbatim, in reading order, with no asserted rows
+/// or cells, so a detected enclosure is never reported as a table it is not.
+/// </summary>
+public sealed class RegionElement : ContentElement
+{
+    /// <inheritdoc />
+    public override string Type => "region";
+
+    /// <summary>Gets or sets the region's raw text rows, top to bottom, claimed from the lines inside it.</summary>
+    public List<string> TextLines { get; set; } = [];
 }
 
 /// <summary>A row within a <see cref="TableElement"/>.</summary>

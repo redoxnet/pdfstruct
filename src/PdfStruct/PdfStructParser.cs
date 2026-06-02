@@ -1136,8 +1136,11 @@ public sealed class PdfStructParser
             pageLines[page] = remaining;
             result[page] = regions
                 .Select((region, i) => new TableRegionContent(
-                    region, TableTextRowBuilder.Build(claimed[i], region.BoundingBox, hRules, vRules)))
+                    region,
+                    TableTextRowBuilder.Build(claimed[i], region.BoundingBox, hRules, vRules),
+                    StructuredRegionClassifier.Classify(claimed[i], region.BoundingBox, vRules)))
                 .ToList();
+
         }
         return result;
     }
@@ -1160,11 +1163,12 @@ public sealed class PdfStructParser
     }
 
     /// <summary>
-    /// Inserts a region-only <see cref="Models.TableElement"/> for each detected
-    /// table at its reading-order position. Run before <see cref="RenumberElements"/>
-    /// and <see cref="CaptionBinder"/> so the tables receive IDs and pick up their
-    /// captions. The element carries the bounding box and the claimed raw text;
-    /// cell structure is recovered in a later pass.
+    /// Inserts an element for each detected region at its reading-order position —
+    /// a region-only <see cref="Models.TableElement"/> for a defensible grid, a
+    /// <see cref="Models.RegionElement"/> for a block we could not structure. Run
+    /// before <see cref="RenumberElements"/> and <see cref="CaptionBinder"/> so the
+    /// elements receive IDs and pick up their captions. A grid carries the claimed
+    /// raw text; cell structure is recovered in a later pass.
     /// </summary>
     private static void InsertTableRegions(
         List<Models.ContentElement> kids,
@@ -1172,34 +1176,44 @@ public sealed class PdfStructParser
     {
         foreach (var page in pageTableContent.Keys.OrderBy(p => p))
             foreach (var content in pageTableContent[page])
-                InsertByReadingOrder(kids, BuildTableRegionElement(content, page));
+                InsertByReadingOrder(kids, BuildRegionElement(content, page));
     }
 
-    /// <summary>Inserts a table element before the first same-page element that begins at or below it, preserving reading order.</summary>
-    private static void InsertByReadingOrder(List<Models.ContentElement> kids, Models.TableElement table)
+    /// <summary>Inserts an element before the first same-page element that begins at or below it, preserving reading order.</summary>
+    private static void InsertByReadingOrder(List<Models.ContentElement> kids, Models.ContentElement element)
     {
         for (var i = 0; i < kids.Count; i++)
         {
-            if (kids[i].PageNumber != table.PageNumber)
+            if (kids[i].PageNumber != element.PageNumber)
             {
-                if (kids[i].PageNumber > table.PageNumber) { kids.Insert(i, table); return; }
+                if (kids[i].PageNumber > element.PageNumber) { kids.Insert(i, element); return; }
                 continue;
             }
-            if (kids[i].BoundingBox.Top <= table.BoundingBox.Top) { kids.Insert(i, table); return; }
+            if (kids[i].BoundingBox.Top <= element.BoundingBox.Top) { kids.Insert(i, element); return; }
         }
-        kids.Add(table);
+        kids.Add(element);
     }
 
-    /// <summary>Builds a region-only <see cref="Models.TableElement"/> carrying its bounding box and claimed raw text rows.</summary>
-    private static Models.TableElement BuildTableRegionElement(TableRegionContent content, int pageNumber) => new()
-    {
-        PageNumber = pageNumber,
-        BoundingBox = content.Region.BoundingBox,
-        TextLines = [.. content.TextRows]
-    };
+    /// <summary>Builds the region element — a region-only <see cref="Models.TableElement"/> (carrying its confident column anchors) for a grid, otherwise a raw-text <see cref="Models.RegionElement"/> with no asserted columns.</summary>
+    private static Models.ContentElement BuildRegionElement(TableRegionContent content, int pageNumber) =>
+        content.Classification.Kind == RegionStructure.Grid
+            ? new Models.TableElement
+            {
+                PageNumber = pageNumber,
+                BoundingBox = content.Region.BoundingBox,
+                TextLines = [.. content.TextRows],
+                ColumnAnchors = [.. content.Classification.Columns]
+            }
+            : new Models.RegionElement
+            {
+                PageNumber = pageNumber,
+                BoundingBox = content.Region.BoundingBox,
+                TextLines = [.. content.TextRows]
+            };
 
-    /// <summary>A detected table region paired with the raw text rows it claimed from the line stream.</summary>
-    private readonly record struct TableRegionContent(DetectedTable Region, IReadOnlyList<string> TextRows);
+    /// <summary>A detected region paired with the raw text rows it claimed and its structural classification.</summary>
+    private readonly record struct TableRegionContent(
+        DetectedTable Region, IReadOnlyList<string> TextRows, RegionClassification Classification);
 
     /// <summary>
     /// Materialises a <see cref="Models.ListElement"/> from a detector

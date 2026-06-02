@@ -53,6 +53,14 @@ public sealed class MarkdownRenderer : IDocumentRenderer
                 RenderTable(t, sb);
                 break;
 
+            case RegionElement region:
+                if (region.TextLines.Count > 0)
+                {
+                    sb.AppendLine("[region]");
+                    foreach (var line in region.TextLines) sb.AppendLine(line);
+                }
+                break;
+
             case ListElement l:
                 RenderList(l, sb);
                 break;
@@ -212,6 +220,9 @@ public sealed class JsonRenderer : IDocumentRenderer
                 break;
             case ParagraphElement p:
                 AddText(dict, p.Text);
+                break;
+            case RegionElement region:
+                if (region.TextLines.Count > 0) dict["text lines"] = region.TextLines;
                 break;
             case TableElement t:
                 dict["number of rows"] = t.NumberOfRows;

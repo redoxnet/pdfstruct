@@ -237,11 +237,12 @@ public static partial class CaptionBinder
         return sizes[sizes.Count / 2];
     }
 
-    /// <summary>A figure (not a machine-readable code) or a table is a caption target.</summary>
+    /// <summary>A figure (not a machine-readable code), a table, or a structured region is a caption target.</summary>
     private static bool IsTarget(ContentElement element) => element switch
     {
         FigureElement figure => figure.Role is not ("qr-code" or "barcode"),
         TableElement => true,
+        RegionElement => true,
         _ => false,
     };
 
