@@ -418,7 +418,10 @@ public sealed class PdfStructParser
         }
 
         if (_options.DetectTables)
+        {
             InsertTableRegions(doc.Kids, pageTableContent);
+            RecoverTableCells(doc.Kids, pdf, pageVerticalRules);
+        }
 
         RenumberElements(doc.Kids);
 
@@ -1215,6 +1218,98 @@ public sealed class PdfStructParser
     /// <summary>A detected region paired with the rows it serialised to and its structural classification.</summary>
     private readonly record struct TableRegionContent(
         DetectedTable Region, TableRows Rows, RegionClassification Classification);
+
+    /// <summary>
+    /// Recovers the row × column cell structure of every grid <see cref="Models.TableElement"/>
+    /// from the words inside its region. Reading words back out of the page —
+    /// rather than reusing the gap-split text lines — is what resolves a borderless
+    /// multi-level header into its leaf columns and group spans. A region whose
+    /// words yield no structure keeps its claimed raw text; one that recovers cells
+    /// has its <see cref="Models.TableElement.TextLines"/> cleared, the cells
+    /// superseding them.
+    /// </summary>
+    /// <param name="kids">The document elements; grid tables among them are filled in place.</param>
+    /// <param name="pdf">The open document, used to re-extract words within each region.</param>
+    /// <param name="pageVerticalRules">Vertical rules per page, the interior ones being the group-band separators.</param>
+    private void RecoverTableCells(
+        List<Models.ContentElement> kids,
+        UglyToad.PdfPig.PdfDocument pdf,
+        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageVerticalRules)
+    {
+        foreach (var pageGroup in kids.OfType<Models.TableElement>()
+            .Where(t => t.RowAnchors.Count > 0)
+            .GroupBy(t => t.PageNumber))
+        {
+            var page = pdf.GetPage(pageGroup.Key);
+            var pageWords = ExtractPageWords(page);
+            var vRules = pageVerticalRules.TryGetValue(pageGroup.Key, out var v) ? v : [];
+
+            foreach (var table in pageGroup)
+            {
+                var regionWords = pageWords
+                    .Where(w => Contains(table.BoundingBox, w.BoundingBox))
+                    .ToList();
+                if (regionWords.Count == 0) continue;
+
+                var groupBoundaries = InteriorVerticalRuleCenters(vRules, table.BoundingBox);
+                var rows = TableCellRecovery.Recover(
+                    regionWords, table.BoundingBox, groupBoundaries, table.RowAnchors, pageGroup.Key);
+                if (rows.Count == 0) continue;
+
+                table.Rows = rows;
+                table.NumberOfRows = rows.Count;
+                table.NumberOfColumns = rows
+                    .SelectMany(r => r.Cells)
+                    .DefaultIfEmpty()
+                    .Max(c => c is null ? 0 : c.ColumnNumber + c.ColumnSpan - 1);
+                table.TextLines = [];
+            }
+        }
+    }
+
+    /// <summary>Extracts the page's horizontal, visible words, mirroring the line-extraction letter filters.</summary>
+    private List<TableCellRecovery.Word> ExtractPageWords(Page page)
+    {
+        IReadOnlyList<Letter> letters;
+        if (_options.FilterHiddenText)
+        {
+            var visibleLetters = page.Letters.Where(IsVisibleLetter).ToList();
+            letters = visibleLetters.Count > 0 ? visibleLetters : page.Letters;
+        }
+        else
+        {
+            letters = page.Letters;
+        }
+
+        var horizontalLetters = letters.Where(l => l.TextOrientation == TextOrientation.Horizontal).ToList();
+        if (horizontalLetters.Count > 0) letters = horizontalLetters;
+        if (letters.Count == 0) return [];
+
+        return LetterGrouper.Instance.GetWords(letters)
+            .Where(w => !string.IsNullOrWhiteSpace(w.Text))
+            .Select(w => new TableCellRecovery.Word(
+                new Models.BoundingBox(w.BoundingBox.Left, w.BoundingBox.Bottom, w.BoundingBox.Right, w.BoundingBox.Top),
+                w.Text))
+            .ToList();
+    }
+
+    /// <summary>Returns the x-centres of the vertical rules that fall strictly inside the region — the group-band separators.</summary>
+    private static IReadOnlyList<double> InteriorVerticalRuleCenters(
+        IReadOnlyList<Models.BoundingBox> verticalRules, Models.BoundingBox region)
+    {
+        const double interiorMargin = 2.0;
+        return verticalRules
+            .Where(v => v.Left > region.Left + interiorMargin && v.Right < region.Right - interiorMargin
+                        && v.Bottom < region.Top && v.Top > region.Bottom)
+            .Select(v => (v.Left + v.Right) / 2.0)
+            .OrderBy(x => x)
+            .ToList();
+    }
+
+    /// <summary>True when the inner box's centre falls within the outer box.</summary>
+    private static bool Contains(Models.BoundingBox outer, Models.BoundingBox inner) =>
+        inner.CenterX >= outer.Left && inner.CenterX <= outer.Right
+        && inner.CenterY >= outer.Bottom && inner.CenterY <= outer.Top;
 
     /// <summary>
     /// Materialises a <see cref="Models.ListElement"/> from a detector

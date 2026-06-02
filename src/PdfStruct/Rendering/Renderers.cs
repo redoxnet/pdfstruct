@@ -92,23 +92,74 @@ public sealed class MarkdownRenderer : IDocumentRenderer
             return;
         }
 
-        foreach (var row in table.Rows)
-        {
-            sb.Append('|');
-            foreach (var cell in row.Cells)
-            {
-                var text = string.Join(" ", cell.Kids.OfType<ParagraphElement>().Select(p => p.Text.Content));
-                sb.Append($" {(string.IsNullOrEmpty(text) ? " " : text)} |");
-            }
-            sb.AppendLine();
+        // GFM has no colspan, so a multi-level header is flattened: each leaf
+        // column's header is the group labels above it joined top to bottom, so
+        // the column stays self-describing even when the table is chunked. The
+        // full hierarchy with spans is preserved in the JSON; the Markdown is a
+        // lossy reading projection.
+        var leafCount = LeafColumnCount(table);
+        if (leafCount == 0) return;
 
-            if (row.RowNumber == 1)
+        var headerRows = Analysis.Tables.TableCellRecovery.HeaderRowCount(table.Rows);
+        var labels = new string[leafCount];
+        Array.Fill(labels, string.Empty);
+        for (var i = 0; i < headerRows; i++)
+        {
+            var cover = LeafCover(table.Rows[i], leafCount, fillSpan: true);
+            for (var j = 0; j < leafCount; j++)
             {
-                sb.Append('|');
-                for (int i = 0; i < row.Cells.Count; i++) sb.Append(" --- |");
-                sb.AppendLine();
+                if (cover[j].Length == 0) continue;
+                labels[j] = labels[j] is { Length: > 0 } existing ? $"{existing} · {cover[j]}" : cover[j];
             }
         }
+
+        AppendRow(sb, labels);
+        sb.Append('|');
+        for (var j = 0; j < leafCount; j++) sb.Append(" --- |");
+        sb.AppendLine();
+
+        for (var i = headerRows; i < table.Rows.Count; i++)
+            AppendRow(sb, LeafCover(table.Rows[i], leafCount, fillSpan: false));
+    }
+
+    /// <summary>The number of leaf columns the table spans — its asserted column count, or the widest cell reach when none was set.</summary>
+    private static int LeafColumnCount(TableElement table)
+    {
+        if (table.NumberOfColumns > 0) return table.NumberOfColumns;
+        var max = 0;
+        foreach (var row in table.Rows)
+            foreach (var cell in row.Cells)
+                max = Math.Max(max, cell.ColumnNumber + cell.ColumnSpan - 1);
+        return max;
+    }
+
+    /// <summary>Projects a row's cells onto its leaf columns: a header row fills every leaf a spanning cell covers, a body row places the value at the cell's first leaf only.</summary>
+    private static string[] LeafCover(TableRow row, int leafCount, bool fillSpan)
+    {
+        var cover = new string[leafCount];
+        for (var j = 0; j < leafCount; j++) cover[j] = string.Empty;
+
+        foreach (var cell in row.Cells)
+        {
+            var text = string.Join(" ", cell.Kids.OfType<ParagraphElement>().Select(p => p.Text.Content)).Trim();
+            var start = cell.ColumnNumber - 1;
+            var end = fillSpan ? start + cell.ColumnSpan - 1 : start;
+            for (var j = Math.Max(0, start); j <= Math.Min(leafCount - 1, end); j++)
+                cover[j] = text;
+        }
+        return cover;
+    }
+
+    /// <summary>Writes one GFM table row, escaping pipes so a cell value never breaks the column structure.</summary>
+    private static void AppendRow(StringBuilder sb, IReadOnlyList<string> cells)
+    {
+        sb.Append('|');
+        foreach (var cell in cells)
+        {
+            var text = cell.Replace("|", "\\|").Replace('\n', ' ');
+            sb.Append(' ').Append(text.Length == 0 ? " " : text).Append(" |");
+        }
+        sb.AppendLine();
     }
 
     private static void RenderList(ListElement list, StringBuilder sb)
