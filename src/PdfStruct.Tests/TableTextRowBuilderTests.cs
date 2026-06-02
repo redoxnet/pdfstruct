@@ -28,10 +28,11 @@ public class TableTextRowBuilderTests
             Cell("Delta", 60, 135), Cell("delta detail", 160, 135, width: 120),
         };
 
-        var rows = TableTextRowBuilder.Build(lines, region, rules, vrules);
+        var result = TableTextRowBuilder.Build(lines, region, rules, vrules);
 
-        Assert.Equal(5, rows.Count);
-        Assert.Contains(rows, r => r.Contains("Alpha") && r.Contains("alpha detail one") && r.Contains("alpha detail two"));
+        Assert.Equal(5, result.Rows.Count);
+        Assert.Contains(result.Rows, r => r.Contains("Alpha") && r.Contains("alpha detail one") && r.Contains("alpha detail two"));
+        Assert.Equal(5, result.Boundaries.Count);
     }
 
     [Fact]
@@ -51,7 +52,7 @@ public class TableTextRowBuilderTests
             Cell("d", 60, 150), Cell("7", 160, 150), Cell("8", 260, 150),
         };
 
-        var rows = TableTextRowBuilder.Build(lines, region, rules, []);
+        var rows = TableTextRowBuilder.Build(lines, region, rules, []).Rows;
 
         Assert.Equal(5, rows.Count);
     }
@@ -75,7 +76,7 @@ public class TableTextRowBuilderTests
             Cell("footer", 60, 122, width: 80),
         };
 
-        var rows = TableTextRowBuilder.Build(lines, region, rules, []);
+        var rows = TableTextRowBuilder.Build(lines, region, rules, []).Rows;
 
         Assert.Equal(7, rows.Count);
     }

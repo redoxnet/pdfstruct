@@ -212,20 +212,20 @@ internal static class DebugImageRenderer
         canvas.DrawRect(rect, stroke);
 
         // Reveal the structure we actually assert: a grid table's confident column
-        // anchors (drawn vertical rules, or stable text columns) as guide lines.
-        // A region/block asserts no columns, so nothing is drawn inside it — an
-        // uncertain column is never visualised as if it were real structure.
-        if (element is TableElement table && table.ColumnAnchors.Count > 0)
+        // anchors (vertical) and row boundaries (horizontal) as guide lines. A
+        // region/block asserts neither, so nothing is drawn inside it — an
+        // uncertain row or column is never visualised as if it were real structure.
+        if (element is TableElement table)
         {
-            DrawColumnGuides(canvas, table, rect, mediaBoxLeft, scale, color);
+            DrawStructureGuides(canvas, table, rect, mediaBoxLeft, mediaBoxTop, scale, color);
         }
 
         DrawLabel(canvas, rect, element, color);
     }
 
-    /// <summary>Draws dashed vertical guides at a grid table's confident column anchors, clipped to its bounding box.</summary>
-    private static void DrawColumnGuides(
-        SKCanvas canvas, TableElement table, SKRect rect, double mediaBoxLeft, float scale, SKColor color)
+    /// <summary>Draws dashed guides at a grid table's confident column anchors (vertical) and row boundaries (horizontal), clipped to its bounding box.</summary>
+    private static void DrawStructureGuides(
+        SKCanvas canvas, TableElement table, SKRect rect, double mediaBoxLeft, double mediaBoxTop, float scale, SKColor color)
     {
         using var guide = new SKPaint
         {
@@ -241,6 +241,13 @@ internal static class DebugImageRenderer
             var x = (float)((anchor - mediaBoxLeft) * scale);
             if (x <= rect.Left || x >= rect.Right) continue;
             canvas.DrawLine(x, rect.Top, x, rect.Bottom, guide);
+        }
+
+        foreach (var anchor in table.RowAnchors)
+        {
+            var y = (float)((mediaBoxTop - anchor) * scale);
+            if (y <= rect.Top || y >= rect.Bottom) continue;
+            canvas.DrawLine(rect.Left, y, rect.Right, y, guide);
         }
     }
 

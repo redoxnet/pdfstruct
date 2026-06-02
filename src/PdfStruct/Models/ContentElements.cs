@@ -108,6 +108,15 @@ public sealed class TableElement : ContentElement
     public List<double> ColumnAnchors { get; set; } = [];
 
     /// <summary>
+    /// Gets or sets the y-positions, in PDF user space, of the row boundaries the
+    /// detector asserts — the horizontal rules of a per-row grid, or the cuts
+    /// between baseline rows otherwise. Recorded only for a grid, paired with
+    /// <see cref="ColumnAnchors"/> to reveal the row×column structure being
+    /// claimed; a <see cref="RegionElement"/> asserts none.
+    /// </summary>
+    public List<double> RowAnchors { get; set; } = [];
+
+    /// <summary>
     /// Gets or sets the table's raw text rows, top to bottom, captured from the
     /// text lines that fall inside the table region. The region claims this text
     /// so it is not also emitted as overlapping sibling paragraphs; it is

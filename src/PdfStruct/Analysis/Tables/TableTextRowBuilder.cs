@@ -5,6 +5,11 @@ using PdfStruct.Models;
 
 namespace PdfStruct.Analysis.Tables;
 
+/// <summary>The raw text rows a region serialised to, and the y-positions of the boundaries between them.</summary>
+/// <param name="Rows">One string per row, top to bottom.</param>
+/// <param name="Boundaries">The y-positions, in PDF user space, of the cuts between consecutive rows.</param>
+internal readonly record struct TableRows(IReadOnlyList<string> Rows, IReadOnlyList<double> Boundaries);
+
 /// <summary>
 /// Serialises the text lines a table region claimed into raw text rows. The
 /// default is baseline grouping — one row per baseline. A row per baseline is
@@ -49,8 +54,8 @@ internal static class TableTextRowBuilder
     /// <param name="region">The table region's bounding box.</param>
     /// <param name="horizontalRules">The page's horizontal rules.</param>
     /// <param name="verticalRules">The page's vertical rules.</param>
-    /// <returns>One string per row.</returns>
-    public static List<string> Build(
+    /// <returns>The raw text rows and the y-positions of the boundaries between them.</returns>
+    public static TableRows Build(
         IReadOnlyList<TextLineBlock> lines,
         BoundingBox region,
         IReadOnlyList<BoundingBox> horizontalRules,
@@ -59,13 +64,27 @@ internal static class TableTextRowBuilder
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(horizontalRules);
         ArgumentNullException.ThrowIfNull(verticalRules);
-        if (lines.Count == 0) return [];
+        if (lines.Count == 0) return new TableRows([], []);
 
         var baselineRows = GroupBaselineRows(lines);
-        if (TryRuleBandRows(lines, baselineRows.Count, region, horizontalRules, verticalRules, out var bandRows))
-            return bandRows;
+        if (TryRuleBandRows(lines, baselineRows.Count, region, horizontalRules, verticalRules, out var bandRows, out var bandBoundaries))
+            return new TableRows(bandRows, bandBoundaries);
 
-        return baselineRows.Select(JoinReadingOrder).Where(row => row.Length > 0).ToList();
+        var rows = baselineRows.Select(JoinReadingOrder).Where(row => row.Length > 0).ToList();
+        return new TableRows(rows, BaselineBoundaries(baselineRows));
+    }
+
+    /// <summary>Returns the y-position of each cut between consecutive baseline rows — the midpoint of the gap.</summary>
+    private static List<double> BaselineBoundaries(List<List<TextLineBlock>> baselineRows)
+    {
+        var baselines = baselineRows
+            .Where(row => row.Count > 0)
+            .Select(row => row.Average(c => c.BaselineY))
+            .ToList();
+
+        var boundaries = new List<double>();
+        for (var i = 1; i < baselines.Count; i++) boundaries.Add((baselines[i - 1] + baselines[i]) / 2.0);
+        return boundaries;
     }
 
     /// <summary>
@@ -79,23 +98,25 @@ internal static class TableTextRowBuilder
         BoundingBox region,
         IReadOnlyList<BoundingBox> horizontalRules,
         IReadOnlyList<BoundingBox> verticalRules,
-        out List<string> rows)
+        out List<string> rows,
+        out List<double> boundaries)
     {
         rows = [];
+        boundaries = [];
 
-        var boundaries = RuleRowBoundaries(horizontalRules, region);
-        var interiorBandCount = boundaries.Count - 1;
+        var ruleBoundaries = RuleRowBoundaries(horizontalRules, region);
+        var interiorBandCount = ruleBoundaries.Count - 1;
         if (interiorBandCount < MinInteriorBands) return false;
 
         // Bucket every line: index = number of boundaries above its baseline, so
         // bucket 0 is above the first rule, buckets 1..n-1 are between rules, and
         // bucket n is below the last. No line is dropped.
         var buckets = new List<List<TextLineBlock>>();
-        for (var i = 0; i <= boundaries.Count; i++) buckets.Add([]);
+        for (var i = 0; i <= ruleBoundaries.Count; i++) buckets.Add([]);
         foreach (var line in lines)
         {
             var index = 0;
-            while (index < boundaries.Count && line.BaselineY < boundaries[index]) index++;
+            while (index < ruleBoundaries.Count && line.BaselineY < ruleBoundaries[index]) index++;
             buckets[index].Add(line);
         }
 
@@ -103,7 +124,7 @@ internal static class TableTextRowBuilder
         if (interior.Any(band => band.Count == 0)) return false;
 
         var heights = new List<double>();
-        for (var i = 1; i < boundaries.Count; i++) heights.Add(boundaries[i - 1] - boundaries[i]);
+        for (var i = 1; i < ruleBoundaries.Count; i++) heights.Add(ruleBoundaries[i - 1] - ruleBoundaries[i]);
         if (CoefficientOfVariation(heights) > MaxBandHeightCv) return false;
 
         var ruleRowCount = buckets.Count(band => band.Count > 0);
@@ -116,6 +137,7 @@ internal static class TableTextRowBuilder
             .Select(JoinReadingOrder)
             .Where(row => row.Length > 0)
             .ToList();
+        boundaries = ruleBoundaries;
         return rows.Count > 0;
     }
 

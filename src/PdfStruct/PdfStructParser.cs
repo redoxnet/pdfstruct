@@ -1140,7 +1140,6 @@ public sealed class PdfStructParser
                     TableTextRowBuilder.Build(claimed[i], region.BoundingBox, hRules, vRules),
                     StructuredRegionClassifier.Classify(claimed[i], region.BoundingBox, vRules)))
                 .ToList();
-
         }
         return result;
     }
@@ -1194,26 +1193,27 @@ public sealed class PdfStructParser
         kids.Add(element);
     }
 
-    /// <summary>Builds the region element — a region-only <see cref="Models.TableElement"/> (carrying its confident column anchors) for a grid, otherwise a raw-text <see cref="Models.RegionElement"/> with no asserted columns.</summary>
+    /// <summary>Builds the region element — a region-only <see cref="Models.TableElement"/> (carrying its confident column and row anchors) for a grid, otherwise a raw-text <see cref="Models.RegionElement"/> with no asserted structure.</summary>
     private static Models.ContentElement BuildRegionElement(TableRegionContent content, int pageNumber) =>
         content.Classification.Kind == RegionStructure.Grid
             ? new Models.TableElement
             {
                 PageNumber = pageNumber,
                 BoundingBox = content.Region.BoundingBox,
-                TextLines = [.. content.TextRows],
-                ColumnAnchors = [.. content.Classification.Columns]
+                TextLines = [.. content.Rows.Rows],
+                ColumnAnchors = [.. content.Classification.Columns],
+                RowAnchors = [.. content.Rows.Boundaries]
             }
             : new Models.RegionElement
             {
                 PageNumber = pageNumber,
                 BoundingBox = content.Region.BoundingBox,
-                TextLines = [.. content.TextRows]
+                TextLines = [.. content.Rows.Rows]
             };
 
-    /// <summary>A detected region paired with the raw text rows it claimed and its structural classification.</summary>
+    /// <summary>A detected region paired with the rows it serialised to and its structural classification.</summary>
     private readonly record struct TableRegionContent(
-        DetectedTable Region, IReadOnlyList<string> TextRows, RegionClassification Classification);
+        DetectedTable Region, TableRows Rows, RegionClassification Classification);
 
     /// <summary>
     /// Materialises a <see cref="Models.ListElement"/> from a detector
