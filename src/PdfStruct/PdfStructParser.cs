@@ -420,7 +420,7 @@ public sealed class PdfStructParser
         if (_options.DetectTables)
         {
             InsertTableRegions(doc.Kids, pageTableContent);
-            RecoverTableCells(doc.Kids, pdf, pageVerticalRules);
+            RecoverTableCells(doc.Kids, pdf, pageVerticalRules, pageHorizontalRules);
         }
 
         RenumberElements(doc.Kids);
@@ -1330,10 +1330,12 @@ public sealed class PdfStructParser
     /// <param name="kids">The document elements; grid tables among them are filled in place.</param>
     /// <param name="pdf">The open document, used to re-extract words within each region.</param>
     /// <param name="pageVerticalRules">Vertical rules per page, the interior ones being the group-band separators.</param>
+    /// <param name="pageHorizontalRules">Horizontal rules per page, the full-width interior ones being the logical-row boundaries.</param>
     private void RecoverTableCells(
         List<Models.ContentElement> kids,
         UglyToad.PdfPig.PdfDocument pdf,
-        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageVerticalRules)
+        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageVerticalRules,
+        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageHorizontalRules)
     {
         foreach (var pageGroup in kids.OfType<Models.TableElement>()
             .Where(t => t.RowAnchors.Count > 0)
@@ -1342,6 +1344,7 @@ public sealed class PdfStructParser
             var page = pdf.GetPage(pageGroup.Key);
             var pageWords = ExtractPageWords(page);
             var vRules = pageVerticalRules.TryGetValue(pageGroup.Key, out var v) ? v : [];
+            var hRules = pageHorizontalRules.TryGetValue(pageGroup.Key, out var h) ? h : [];
 
             foreach (var table in pageGroup)
             {
@@ -1351,14 +1354,15 @@ public sealed class PdfStructParser
                 if (regionWords.Count == 0) continue;
 
                 var groupBoundaries = InteriorVerticalRuleCenters(vRules, table.BoundingBox);
+                var ruleYs = RegionHorizontalRuleYs(hRules, table.BoundingBox);
                 var rows = TableCellRecovery.Recover(
-                    regionWords, table.BoundingBox, groupBoundaries, table.RowAnchors, pageGroup.Key, table.ColumnAnchors);
+                    regionWords, table.BoundingBox, groupBoundaries, ruleYs, pageGroup.Key, table.ColumnAnchors);
                 if (rows.Count == 0
                     && table.ColumnAnchors.Count > 0
                     && table.RowAnchors.Count >= table.ColumnAnchors.Count * 2)
                 {
                     rows = TableCellRecovery.Recover(
-                        regionWords, table.BoundingBox, table.ColumnAnchors, table.RowAnchors, pageGroup.Key, table.ColumnAnchors);
+                        regionWords, table.BoundingBox, table.ColumnAnchors, ruleYs, pageGroup.Key, table.ColumnAnchors);
                 }
                 if (rows.Count == 0) continue;
 
@@ -1409,6 +1413,21 @@ public sealed class PdfStructParser
                         && v.Bottom < region.Top && v.Top > region.Bottom)
             .Select(v => (v.Left + v.Right) / 2.0)
             .OrderBy(x => x)
+            .ToList();
+    }
+
+    /// <summary>Returns the y-centres of the full-width horizontal rules within the region — the logical-row boundaries of a ruled grid.</summary>
+    private static IReadOnlyList<double> RegionHorizontalRuleYs(
+        IReadOnlyList<Models.BoundingBox> horizontalRules, Models.BoundingBox region)
+    {
+        const double minWidthShare = 0.5;
+        var centerY = (Models.BoundingBox r) => (r.Top + r.Bottom) / 2.0;
+        return horizontalRules
+            .Where(r => r.Left < region.Right && r.Right > region.Left
+                        && r.Width >= minWidthShare * region.Width
+                        && centerY(r) <= region.Top && centerY(r) >= region.Bottom)
+            .Select(centerY)
+            .OrderByDescending(y => y)
             .ToList();
     }
 

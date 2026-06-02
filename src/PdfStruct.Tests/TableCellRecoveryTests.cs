@@ -49,9 +49,9 @@ public class TableCellRecoveryTests
         // group-label row over a leaf-header row over three data rows. Vertical
         // rules are drawn only at the group boundaries; the leaf columns recur as
         // centre-aligned value clusters. The group labels must span their leaves.
-        var (words, region, groupBoundaries, rowBoundaries) = MultiLevelTable();
+        var (words, region, groupBoundaries) = MultiLevelTable();
 
-        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, rowBoundaries, pageNumber: 1);
+        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, [], pageNumber: 1);
 
         Assert.Equal(5, rows.Count);
 
@@ -64,9 +64,9 @@ public class TableCellRecoveryTests
     [Fact]
     public void Recover_LeafHeaderAndData_AreAllSingleSpanCells()
     {
-        var (words, region, groupBoundaries, rowBoundaries) = MultiLevelTable();
+        var (words, region, groupBoundaries) = MultiLevelTable();
 
-        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, rowBoundaries, pageNumber: 1);
+        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, [], pageNumber: 1);
 
         // The leaf header (row 2) and every data row are entirely single-span —
         // no cell merges leaves once the group labels are past.
@@ -83,9 +83,9 @@ public class TableCellRecoveryTests
     [Fact]
     public void Recover_FreeTextLabelColumn_CollapsesToOneCell()
     {
-        var (words, region, groupBoundaries, rowBoundaries) = MultiLevelTable();
+        var (words, region, groupBoundaries) = MultiLevelTable();
 
-        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, rowBoundaries, pageNumber: 1);
+        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, [], pageNumber: 1);
 
         // The multi-word method name "Almazan et al" never aligns down the rows,
         // so its band is a single leaf and the three words form one cell.
@@ -107,9 +107,8 @@ public class TableCellRecoveryTests
             W("Bob", 70, 672, 40), W("27", 170, 672, 30), W("Busan", 270, 672, 34),
         };
         var region = new BoundingBox(45, 660, 320, 712);
-        var rowBoundaries = new List<double> { 693, 679 };
 
-        var rows = TableCellRecovery.Recover(words, region, [], rowBoundaries, pageNumber: 1);
+        var rows = TableCellRecovery.Recover(words, region, [], [], pageNumber: 1);
 
         Assert.Equal(3, rows.Count);
         Assert.All(rows, r => Assert.Equal(3, r.Cells.Count));
@@ -121,12 +120,13 @@ public class TableCellRecoveryTests
 
     /// <summary>
     /// Builds the validated four-group results table as words plus the asserted
-    /// group (vertical-rule) and row boundaries. Group separators sit at
+    /// group (vertical-rule) boundaries. Group separators sit at
     /// x = 202, 300, 368, 467; leaf values are centre-aligned and recur down the
-    /// rows; the method column is free text that never aligns.
+    /// rows; the method column is free text that never aligns. Logical rows are
+    /// recovered from the word baselines, so no row boundaries are supplied.
     /// </summary>
     private static (List<TableCellRecovery.Word> Words, BoundingBox Region,
-        List<double> GroupBoundaries, List<double> RowBoundaries) MultiLevelTable()
+        List<double> GroupBoundaries) MultiLevelTable()
     {
         var words = new List<TableCellRecovery.Word>
         {
@@ -160,8 +160,7 @@ public class TableCellRecoveryTests
         };
         var region = new BoundingBox(91, 565, 504, 645);
         var groupBoundaries = new List<double> { 202, 300, 368, 467 };
-        var rowBoundaries = new List<double> { 629, 611, 593, 579 };
-        return (words, region, groupBoundaries, rowBoundaries);
+        return (words, region, groupBoundaries);
     }
 
     private static TableCellRecovery.Word W(string text, double centerX, double centerY, double width = 20, double height = 8) =>

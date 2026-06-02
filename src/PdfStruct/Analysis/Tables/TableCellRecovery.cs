@@ -66,7 +66,7 @@ internal static class TableCellRecovery
     /// <param name="words">The words inside the region, in any order.</param>
     /// <param name="region">The region's bounding box.</param>
     /// <param name="groupBoundaries">The x-positions of the interior vertical rules — the group-band separators; empty for a single-level header.</param>
-    /// <param name="rowBoundaries">The y-positions of the asserted row boundaries, top to bottom.</param>
+    /// <param name="horizontalRuleYs">The y-centres of full-width horizontal rules inside the region, used to build logical rows.</param>
     /// <param name="pageNumber">The 1-indexed page the region sits on.</param>
     /// <param name="columnAnchors">Optional detector-provided stable column anchors, used to seed a borderless single-band grid.</param>
     /// <returns>The recovered rows, top to bottom, or an empty list when no structure could be read.</returns>
@@ -74,16 +74,16 @@ internal static class TableCellRecovery
         IReadOnlyList<Word> words,
         BoundingBox region,
         IReadOnlyList<double> groupBoundaries,
-        IReadOnlyList<double> rowBoundaries,
+        IReadOnlyList<double> horizontalRuleYs,
         int pageNumber,
         IReadOnlyList<double>? columnAnchors = null)
     {
         ArgumentNullException.ThrowIfNull(words);
         ArgumentNullException.ThrowIfNull(groupBoundaries);
-        ArgumentNullException.ThrowIfNull(rowBoundaries);
+        ArgumentNullException.ThrowIfNull(horizontalRuleYs);
         if (words.Count == 0) return [];
 
-        var rowWords = BucketIntoRows(words, rowBoundaries);
+        var rowWords = LogicalRowBuilder.Build(words, region, horizontalRuleYs);
         var bands = BuildBands(region, groupBoundaries);
         var tolerance = Math.Max(MinColumnCenterTolerance, ColumnCenterToleranceFactor * Median(words.Select(w => w.BoundingBox.Height)));
 
@@ -153,23 +153,6 @@ internal static class TableCellRecovery
 
         var solid = occupancy.Count(o => o >= 0.5 * body.Count);
         return solid >= SolidColumnShare * leafCount;
-    }
-
-    /// <summary>Buckets words into rows by the asserted row boundaries, top to bottom; a word falls in the band its centre lies in.</summary>
-    private static List<List<Word>> BucketIntoRows(IReadOnlyList<Word> words, IReadOnlyList<double> rowBoundaries)
-    {
-        var boundaries = rowBoundaries.OrderByDescending(y => y).ToList();
-        var rows = new List<List<Word>>();
-        for (var i = 0; i <= boundaries.Count; i++) rows.Add([]);
-
-        foreach (var word in words)
-        {
-            var centerY = word.BoundingBox.CenterY;
-            var index = 0;
-            while (index < boundaries.Count && centerY < boundaries[index]) index++;
-            rows[index].Add(word);
-        }
-        return rows;
     }
 
     /// <summary>Splits the region into group bands at the interior vertical rules, left to right.</summary>
