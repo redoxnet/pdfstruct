@@ -344,7 +344,7 @@ public sealed class PdfStructParser
         // into a mega-paragraph spanning the table — form its own paragraph and
         // bind correctly.
         var pageTableContent = _options.DetectTables
-            ? ReconcileTableRegions(pageLines, pageRuledTables, pageBorderlessTables)
+            ? ReconcileTableRegions(pageLines, pageRuledTables, pageBorderlessTables, pageHorizontalRules, pageVerticalRules)
             : new Dictionary<int, List<TableRegionContent>>();
 
         var pageBlocks = new Dictionary<int, IReadOnlyList<TextBlock>>(pdf.NumberOfPages);
@@ -1101,11 +1101,15 @@ public sealed class PdfStructParser
     /// <param name="pageLines">Per-page lines; the interior lines of each table are removed in place.</param>
     /// <param name="pageRuledTables">Ruled regions per page.</param>
     /// <param name="pageBorderlessTables">Borderless regions per page.</param>
+    /// <param name="pageHorizontalRules">Horizontal rules per page, used to segment rows in a per-row ruled grid.</param>
+    /// <param name="pageVerticalRules">Vertical rules per page, used as column evidence when segmenting rows.</param>
     /// <returns>The merged regions with their claimed text rows, keyed by page number.</returns>
     private static Dictionary<int, List<TableRegionContent>> ReconcileTableRegions(
         Dictionary<int, IReadOnlyList<TextLineBlock>> pageLines,
         IReadOnlyDictionary<int, IReadOnlyList<DetectedTable>> pageRuledTables,
-        IReadOnlyDictionary<int, IReadOnlyList<DetectedTable>> pageBorderlessTables)
+        IReadOnlyDictionary<int, IReadOnlyList<DetectedTable>> pageBorderlessTables,
+        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageHorizontalRules,
+        IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageVerticalRules)
     {
         var result = new Dictionary<int, List<TableRegionContent>>();
         foreach (var page in pageLines.Keys.OrderBy(p => p))
@@ -1126,9 +1130,13 @@ public sealed class PdfStructParser
                 else remaining.Add(line);
             }
 
+            var hRules = pageHorizontalRules.TryGetValue(page, out var h) ? h : [];
+            var vRules = pageVerticalRules.TryGetValue(page, out var v) ? v : [];
+
             pageLines[page] = remaining;
             result[page] = regions
-                .Select((region, i) => new TableRegionContent(region, BuildTableTextRows(claimed[i])))
+                .Select((region, i) => new TableRegionContent(
+                    region, TableTextRowBuilder.Build(claimed[i], region.BoundingBox, hRules, vRules)))
                 .ToList();
         }
         return result;
@@ -1150,45 +1158,6 @@ public sealed class PdfStructParser
         }
         return best;
     }
-
-    /// <summary>Groups the claimed lines into baseline rows, top to bottom, joining each row's cells left to right into one raw text line.</summary>
-    private static List<string> BuildTableTextRows(List<TextLineBlock> lines)
-    {
-        if (lines.Count == 0) return [];
-
-        var ordered = lines.OrderByDescending(l => l.BaselineY).ToList();
-        var rows = new List<string>();
-        var current = new List<TextLineBlock>();
-        var baseline = 0.0;
-        foreach (var line in ordered)
-        {
-            if (current.Count == 0)
-            {
-                current.Add(line);
-                baseline = line.BaselineY;
-                continue;
-            }
-
-            var smaller = Math.Min(current.Min(c => c.FontSize), line.FontSize);
-            var tolerance = Math.Max(1.5, 0.4 * smaller);
-            if (baseline - line.BaselineY <= tolerance)
-            {
-                current.Add(line);
-            }
-            else
-            {
-                rows.Add(JoinRowCells(current));
-                current = [line];
-                baseline = line.BaselineY;
-            }
-        }
-        rows.Add(JoinRowCells(current));
-        return rows.Where(row => row.Length > 0).ToList();
-    }
-
-    /// <summary>Joins a baseline row's cells left to right into a single space-separated string.</summary>
-    private static string JoinRowCells(List<TextLineBlock> cells) =>
-        string.Join(" ", cells.OrderBy(c => c.Left).Select(c => c.Text.Trim())).Trim();
 
     /// <summary>
     /// Inserts a region-only <see cref="Models.TableElement"/> for each detected
