@@ -75,6 +75,10 @@ internal static class TextAwareRuledTableDetector
         @"^\s*(Table|Tab\.|Figure|Fig\.|표|그림|도)\s*\d",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    private static readonly Regex SourceNotePattern = new(
+        @"^\s*(자료|출처|source|data source)\s*[:：]",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>Splits a page's non-clipping paths into horizontal and vertical ruling lines.</summary>
     /// <param name="page">The page to inspect.</param>
     /// <returns>The horizontal and vertical rule boxes, clamped to the crop box.</returns>
@@ -211,9 +215,12 @@ internal static class TextAwareRuledTableDetector
         {
             var upper = stack[i - 1];
             var lower = stack[i];
-            var captionBetween = rows.Any(r =>
-                r.Baseline < upper.Bottom && r.Baseline > lower.Top && IsCaptionRow(r));
-            if (captionBetween)
+            // A caption or a source note ("자료:", "Source:") between two rules is
+            // furniture separating the table from the figures or notes below it,
+            // not table payload — it ends the table rather than extending it.
+            var barrierBetween = rows.Any(r =>
+                r.Baseline < upper.Bottom && r.Baseline > lower.Top && (IsCaptionRow(r) || IsSourceNoteRow(r)));
+            if (barrierBetween)
             {
                 if (segment.Count >= 2) yield return segment;
                 segment = [lower];
@@ -381,6 +388,8 @@ internal static class TextAwareRuledTableDetector
     }
 
     private static bool IsCaptionRow(Row row) => CaptionPattern.IsMatch(row.Text);
+
+    private static bool IsSourceNoteRow(Row row) => SourceNotePattern.IsMatch(row.Text);
 
     /// <summary>Returns the row's cells whose centre falls within the rule extent, or <c>null</c> when none do.</summary>
     private static Row? ClipRowToExtent(Row row, double left, double right)

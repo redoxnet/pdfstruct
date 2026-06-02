@@ -54,9 +54,11 @@ internal static class StructuredRegionClassifier
     /// <param name="lines">The lines inside the region.</param>
     /// <param name="region">The region's bounding box.</param>
     /// <param name="verticalRules">The page's vertical rules.</param>
+    /// <param name="columnsAlreadyValidated">True when the region came from the borderless detector, which already proved a repeated multi-column schema; such a region is always a grid and only its columns are derived here.</param>
     /// <returns>The structure the region can defend and the columns backing a grid.</returns>
     public static RegionClassification Classify(
-        IReadOnlyList<TextLineBlock> lines, BoundingBox region, IReadOnlyList<BoundingBox> verticalRules)
+        IReadOnlyList<TextLineBlock> lines, BoundingBox region, IReadOnlyList<BoundingBox> verticalRules,
+        bool columnsAlreadyValidated)
     {
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(verticalRules);
@@ -74,13 +76,21 @@ internal static class StructuredRegionClassifier
         if (ruleAnchors.Count >= 1) return new RegionClassification(RegionStructure.Grid, ruleAnchors);
 
         var rows = GroupBaselineRows(lines);
-        if (rows.Count < 2 || fontSize <= 0) return new RegionClassification(RegionStructure.Block, []);
-
-        var anchors = ClusterAnchors(lines.Select(l => l.Left), tolerance);
+        var anchors = fontSize > 0
+            ? ClusterAnchors(lines.Select(l => l.Left), tolerance)
+            : [];
         var stable = anchors
             .Where(anchor => rows.Count(row => row.Any(cell => Math.Abs(cell.Left - anchor) <= tolerance))
                 >= AnchorStabilityShare * rows.Count)
             .ToList();
+
+        // The borderless detector only fires once it has found a repeated multi-
+        // column schema, so trust it as a grid; a header band added above the body
+        // can otherwise dilute the anchor stability and look like a block.
+        if (columnsAlreadyValidated)
+            return new RegionClassification(RegionStructure.Grid, stable);
+
+        if (rows.Count < 2 || fontSize <= 0) return new RegionClassification(RegionStructure.Block, []);
 
         return stable.Count >= MinStableColumns
             ? new RegionClassification(RegionStructure.Grid, stable)

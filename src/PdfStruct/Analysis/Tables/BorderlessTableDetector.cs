@@ -64,8 +64,16 @@ internal static class BorderlessTableDetector
     /// <summary>Minimum tabular rows a region must contain.</summary>
     public const int MinTabularRows = 2;
 
-    /// <summary>A header row is attached above the body only while each successive row is within this factor of the font size of the last — multi-level headers stack tightly.</summary>
-    public const double HeaderRowGapFactor = 2.0;
+    /// <summary>A header row is attached above the body only while each successive row is within this factor of the font size of the last — multi-level headers stack tightly, though a touch looser than the body since header rows are often spaced a little more.</summary>
+    public const double HeaderRowGapFactor = 2.5;
+
+    /// <summary>
+    /// A spanning header cell — a group label covering several body columns
+    /// (e.g. "LR AP", "Brain shell core Brain shell core") — may run this long,
+    /// looser than <see cref="MaxMedianCellTextLength"/> because one label covers
+    /// many columns; still short of a wrapped prose line, which is rejected.
+    /// </summary>
+    public const int MaxSpanningHeaderCellTextLength = 45;
 
     private static readonly Regex CaptionPattern = new(
         @"^\s*(Table|Tab\.|Figure|Fig\.|표|그림|도)\s*\d",
@@ -197,13 +205,18 @@ internal static class BorderlessTableDetector
     private static bool IsHeaderRow(Row row, List<double> anchors, double tolerance)
     {
         if (row.Cells.Count == 0) return false;
-        if (Median(row.Cells.Select(c => (double)c.Text.Length)) > MaxMedianCellTextLength) return false;
 
         foreach (var cell in row.Cells)
         {
             var aligns = NearestColumn(cell.Left, anchors, tolerance) >= 0;
             var spans = anchors.Count(a => a >= cell.Left - tolerance && a <= cell.Right + tolerance) >= 2;
             if (!aligns && !spans) return false;
+
+            // A cell aligned to one column is a terse data-header token; a cell
+            // spanning a group of columns is a group label and may run longer.
+            // Either way a wrapped prose line, far longer still, is rejected.
+            var maxLength = spans ? MaxSpanningHeaderCellTextLength : MaxMedianCellTextLength;
+            if (cell.Text.Trim().Length > maxLength) return false;
         }
         return true;
     }

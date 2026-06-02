@@ -24,7 +24,7 @@ public class StructuredRegionClassifierTests
             Cell("row three whole line", 60, 160, width: 200),
         };
 
-        Assert.Equal(RegionStructure.Grid, StructuredRegionClassifier.Classify(lines, region, vrules).Kind);
+        Assert.Equal(RegionStructure.Grid, StructuredRegionClassifier.Classify(lines, region, vrules, columnsAlreadyValidated: false).Kind);
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public class StructuredRegionClassifierTests
             Cell("g", 60, 140), Cell("h", 160, 140), Cell("i", 260, 140),
         };
 
-        var result = StructuredRegionClassifier.Classify(lines, region, []);
+        var result = StructuredRegionClassifier.Classify(lines, region, [], columnsAlreadyValidated: false);
         Assert.Equal(RegionStructure.Grid, result.Kind);
         Assert.Equal(3, result.Columns.Count);
     }
@@ -59,9 +59,28 @@ public class StructuredRegionClassifierTests
             Cell("(73)", 60, 160), Cell("value four", 300, 160, width: 40),
         };
 
-        var result = StructuredRegionClassifier.Classify(lines, region, []);
+        var result = StructuredRegionClassifier.Classify(lines, region, [], columnsAlreadyValidated: false);
         Assert.Equal(RegionStructure.Block, result.Kind);
         Assert.Empty(result.Columns);
+    }
+
+    [Fact]
+    public void Classify_BorderlessDetected_TrustedAsGridDespiteHeaderDilution()
+    {
+        // The borderless detector only fires after proving a multi-column schema.
+        // A header band added above the body can dilute anchor stability below the
+        // block threshold, but the region must stay a grid (us_patent header fix).
+        var region = new BoundingBox(50, 100, 350, 230);
+        var lines = new List<TextLineBlock>
+        {
+            Cell("LR AP", 120, 220, width: 80),
+            Cell("a", 60, 180), Cell("b", 160, 180), Cell("c", 260, 180),
+            Cell("longer label", 110, 160, width: 70), Cell("e", 160, 160),
+            Cell("g", 60, 140), Cell("h", 160, 140), Cell("i", 260, 140),
+        };
+
+        var result = StructuredRegionClassifier.Classify(lines, region, [], columnsAlreadyValidated: true);
+        Assert.Equal(RegionStructure.Grid, result.Kind);
     }
 
     private static BoundingBox VRule(double x, double bottom, double top) => new(x, bottom, x + 0.5, top);

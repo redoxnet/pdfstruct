@@ -1138,7 +1138,8 @@ public sealed class PdfStructParser
                 .Select((region, i) => new TableRegionContent(
                     region,
                     TableTextRowBuilder.Build(claimed[i], region.BoundingBox, hRules, vRules),
-                    StructuredRegionClassifier.Classify(claimed[i], region.BoundingBox, vRules)))
+                    StructuredRegionClassifier.Classify(
+                        claimed[i], region.BoundingBox, vRules, region.Kind == "borderless")))
                 .ToList();
         }
         return result;
