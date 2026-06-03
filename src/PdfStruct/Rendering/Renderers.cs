@@ -118,8 +118,19 @@ public sealed class MarkdownRenderer : IDocumentRenderer
         for (var j = 0; j < leafCount; j++) sb.Append(" --- |");
         sb.AppendLine();
 
+        // A row-label cell that spans several body rows is recovered on the first
+        // of them, leaving the rest with an empty leftmost column. Carry the last
+        // row label down so every chunked row stays self-describing, mirroring how
+        // the column headers above each leaf are repeated. Only the leftmost
+        // (row-label) column is carried — a blank value cell is left blank.
+        var carriedLabel = string.Empty;
         for (var i = headerRows; i < table.Rows.Count; i++)
-            AppendRow(sb, LeafCover(table.Rows[i], leafCount, fillSpan: false));
+        {
+            var cover = LeafCover(table.Rows[i], leafCount, fillSpan: false);
+            if (cover[0].Length == 0) cover[0] = carriedLabel;
+            else carriedLabel = cover[0];
+            AppendRow(sb, cover);
+        }
     }
 
     /// <summary>The number of leaf columns the table spans — its asserted column count, or the widest cell reach when none was set.</summary>
