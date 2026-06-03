@@ -185,6 +185,70 @@ public class TableCellRecoveryTests
         Assert.Equal("Bob", CellText(rows[1].Cells[0]));
     }
 
+    [Fact]
+    public void HeaderRowCount_OrphanStubLabelBetweenGroupAndLeafRows_CountsLeafRowAsHeader()
+    {
+        // The real multi-level academic table: the row-label header ("Method") is
+        // vertically centred over the two-line column header, so it lands on its
+        // own baseline between the group-label row and the leaf-header row. The
+        // header must still run through the leaf row — otherwise the leaf
+        // sub-headers ("50", "1k", "None" …) are mistaken for the first data row.
+        var (words, region, groupBoundaries) = MultiLevelTableWithOrphanStub();
+
+        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, [], pageNumber: 1);
+
+        Assert.True(rows.Count >= 3);
+        Assert.Contains(rows[0].Cells, c => c.ColumnSpan > 1);
+        Assert.Equal("Method", CellText(rows[1].Cells[0]).Trim());
+        Assert.Equal(3, TableCellRecovery.HeaderRowCount(rows));
+    }
+
+    /// <summary>
+    /// The validated four-group table, but with the "Method" stub label dropped
+    /// onto its own baseline between the group-label row and the leaf-header row —
+    /// the layout the real PDF produces and the flat-baseline synthetic does not.
+    /// </summary>
+    private static (List<TableCellRecovery.Word> Words, BoundingBox Region,
+        List<double> GroupBoundaries) MultiLevelTableWithOrphanStub()
+    {
+        var words = new List<TableCellRecovery.Word>
+        {
+            // Group-label row (y = 636) — without the "Method" stub.
+            W("IIIT5K", 251, 636), W("SVT", 334, 636), W("IC03", 418, 636), W("IC13", 486, 636),
+
+            // Stub label on its own middle baseline (y = 629).
+            W("Method", 146, 629),
+
+            // Leaf-header row (y = 622).
+            W("50", 218, 622), W("1k", 249, 622), W("None", 282, 622),
+            W("50", 316, 622), W("None", 350, 622),
+            W("50", 384, 622), W("Full", 415, 622), W("None", 449, 622),
+            W("None", 486, 622),
+
+            // Data rows (y = 600, 586, 572) — distinct, non-aligning method labels.
+            W("Almazan", 130, 600), W("et", 165, 600), W("al", 185, 600),
+            W("91.2", 218, 600), W("82.1", 249, 600), W("-", 282, 600),
+            W("89.2", 316, 600), W("-", 350, 600),
+            W("88.4", 384, 600), W("-", 415, 600), W("90.1", 449, 600),
+            W("-", 486, 600),
+
+            W("Jaderberg", 140, 586), W("et", 178, 586), W("al", 195, 586),
+            W("95.5", 218, 586), W("89.6", 249, 586), W("80.3", 282, 586),
+            W("93.2", 316, 586), W("71.7", 350, 586),
+            W("97.8", 384, 586), W("97.0", 415, 586), W("93.1", 449, 586),
+            W("90.8", 486, 586),
+
+            W("Ours", 120, 572),
+            W("96.8", 218, 572), W("94.4", 249, 572), W("83.7", 282, 572),
+            W("95.7", 316, 572), W("82.2", 350, 572),
+            W("98.7", 384, 572), W("98.0", 415, 572), W("95.0", 449, 572),
+            W("92.4", 486, 572),
+        };
+        var region = new BoundingBox(91, 565, 504, 645);
+        var groupBoundaries = new List<double> { 202, 300, 368, 467 };
+        return (words, region, groupBoundaries);
+    }
+
     private static string CellText(TableCell cell) =>
         string.Join(" ", cell.Kids.OfType<ParagraphElement>().Select(p => p.Text.Content));
 

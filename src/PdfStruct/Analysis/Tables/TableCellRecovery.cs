@@ -174,10 +174,18 @@ internal static class TableCellRecovery
 
     /// <summary>
     /// The count of leading header rows. A table with a spanning cell carries a
-    /// multi-level header — the leading rows down to and including the leaf-header
-    /// row just below the last group-label row; one without spans has a single
-    /// header row.
+    /// multi-level header — the group-label row(s) down through the leaf sub-header
+    /// row beneath them; one without spans has a single header row.
     /// </summary>
+    /// <remarks>
+    /// The leaf sub-header is not always the row immediately below the spans: a
+    /// vertically centred row-label header (a stub such as "Method") can land on
+    /// its own baseline between the group-label row and the leaf-header row. So the
+    /// header is taken to run through every leading row that is not yet a data
+    /// record — a stub-only label row or a leaf-header row that carries no row
+    /// label — stopping at the first record that opens the row-label column with a
+    /// value beside it.
+    /// </remarks>
     /// <param name="rows">The recovered rows, top to bottom.</param>
     /// <returns>The number of leading rows that form the header.</returns>
     public static int HeaderRowCount(IReadOnlyList<TableRow> rows)
@@ -190,8 +198,16 @@ internal static class TableCellRecovery
             if (rows[i].Cells.Any(c => c.ColumnSpan > 1)) { lastSpan = i; sawSpan = true; }
             else if (i > lastSpan + 1) break;
         }
-        return sawSpan ? Math.Min(lastSpan + 2, rows.Count) : 1;
+        if (!sawSpan) return 1;
+
+        var header = lastSpan + 1;
+        while (header < rows.Count && !IsDataRecord(rows[header])) header++;
+        return Math.Min(Math.Max(header, lastSpan + 2), rows.Count);
     }
+
+    /// <summary>True when a row reads as a data record: it opens the row-label column and also carries a value in a later column.</summary>
+    private static bool IsDataRecord(TableRow row) =>
+        row.Cells.Any(c => c.ColumnNumber == 1) && row.Cells.Any(c => c.ColumnNumber > 1);
 
     /// <summary>
     /// Removes structural columns at the left edge that no recovered cell covers.
