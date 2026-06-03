@@ -249,6 +249,39 @@ public class TableCellRecoveryTests
         return (words, region, groupBoundaries);
     }
 
+    [Fact]
+    public void Recover_RuledTableWithWrappedHeader_KeepsHeaderAsOneRow()
+    {
+        // A ruled table whose header wraps to two baselines: "Control" / "Mean SE)"
+        // in one column, "Diff" / "ence (95%" in another. The drawn row rules put
+        // both header baselines in one band, so the header is one row. The
+        // continuation baseline carries letter words on the left and a value-like
+        // token ("(95%") on the right, which must not be mistaken for a new record
+        // that splits the merged header.
+        var words = new List<TableCellRecovery.Word>
+        {
+            // Header line 1 (y = 702) and its wrapped line 2 (y = 692).
+            W("Method", 70, 702, 44), W("Control", 150, 702, 40), W("Diff", 250, 702, 28), W("p", 320, 702, 10),
+            W("Mean", 148, 692, 30), W("SE)", 172, 692, 20), W("ence", 245, 692, 26), W("(95%", 315, 692, 26),
+
+            // Data rows (y = 679, 665, 651).
+            W("Alpha", 70, 679, 40), W("10.0", 150, 679, 26), W("1.0", 250, 679, 22), W("0.01", 320, 679, 26),
+            W("Beta", 70, 665, 34), W("20.0", 150, 665, 26), W("2.0", 250, 665, 22), W("0.02", 320, 665, 26),
+            W("Gamma", 70, 651, 44), W("30.0", 150, 651, 26), W("3.0", 250, 651, 22), W("0.03", 320, 651, 26),
+        };
+        var region = new BoundingBox(50, 644, 350, 712);
+        var groupBoundaries = new List<double> { 110, 210, 290 };
+        var ruleYs = new List<double> { 710, 686, 672, 658, 644 };
+
+        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, ruleYs, pageNumber: 1);
+
+        // One header row plus three data rows — the wrapped header line did not
+        // become a fifth row.
+        Assert.Equal(4, rows.Count);
+        Assert.Equal("Control Mean SE)", CellText(rows[0].Cells[1]));
+        Assert.Equal("Alpha", CellText(rows[1].Cells[0]));
+    }
+
     private static string CellText(TableCell cell) =>
         string.Join(" ", cell.Kids.OfType<ParagraphElement>().Select(p => p.Text.Content));
 

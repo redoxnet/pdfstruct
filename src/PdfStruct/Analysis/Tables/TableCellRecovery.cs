@@ -113,18 +113,20 @@ internal static class TableCellRecovery
 
     /// <summary>
     /// Splits dense ruled-table rows where a detector band swallowed adjacent
-    /// records. A stacked baseline is a new record only when it opens the
-    /// leftmost label area and also carries values in later columns; label-only
-    /// continuation lines stay with the row above.
+    /// records. A stacked baseline is a new record only when it opens the band's
+    /// leftmost (row-label) column and also carries values in later columns;
+    /// label-only or wrapped continuation lines stay with the row above. The anchor
+    /// is the band's leftmost word, not the area before the first value: a wrapped
+    /// header line ("… Mean ± SE) … (95% CI)") has left-side words too, and keying
+    /// off the first value column would mistake them for a new record and split a
+    /// merged multi-line header back apart.
     /// </summary>
     private static List<List<Word>> SplitStackedRecordRows(List<List<Word>> rows) =>
         TableRowGrouping.SplitStackedRecords(rows, row =>
         {
             var tolerance = Math.Max(MinColumnCenterTolerance, ColumnCenterToleranceFactor * Median(row.Select(w => w.BoundingBox.Height)));
             var firstValueCenter = FirstValueColumnCenter(row);
-            var anchorLimit = firstValueCenter is null
-                ? row.Min(w => w.BoundingBox.CenterX) + tolerance
-                : firstValueCenter.Value - Math.Max(3 * tolerance, 12.0);
+            var anchorLimit = row.Min(w => w.BoundingBox.CenterX) + tolerance;
             return words => OpensRecord(words, anchorLimit, firstValueCenter, tolerance);
         });
 
