@@ -1425,6 +1425,7 @@ public sealed class PdfStructParser
         IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageVerticalRules,
         IReadOnlyDictionary<int, IReadOnlyList<Models.BoundingBox>> pageHorizontalRules)
     {
+        var replacements = new List<(Models.TableElement Original, List<Models.ContentElement> News)>();
         foreach (var pageGroup in kids.OfType<Models.TableElement>()
             .Where(t => t.RowAnchors.Count > 0)
             .GroupBy(t => t.PageNumber))
@@ -1444,36 +1445,190 @@ public sealed class PdfStructParser
                 var groupBoundaries = InteriorVerticalRuleCenters(vRules, table.BoundingBox);
                 var ruleYs = RegionHorizontalRuleYs(hRules, table.BoundingBox);
 
-                List<Models.TableRow> RecoverWithRows(IReadOnlyList<double> boundaries)
+                var rows = RecoverRegionRows(
+                    regionWords, table.BoundingBox, groupBoundaries, ruleYs, pageGroup.Key,
+                    table.ColumnAnchors, table.RowAnchors.Count);
+                if (rows.Count > 0)
                 {
-                    var withRules = TableCellRecovery.Recover(
-                        regionWords, table.BoundingBox, boundaries, ruleYs, pageGroup.Key, table.ColumnAnchors);
-                    if (ruleYs.Count == 0) return withRules;
-
-                    var withoutRules = TableCellRecovery.Recover(
-                        regionWords, table.BoundingBox, boundaries, [], pageGroup.Key, table.ColumnAnchors);
-                    return PreferCompactRows(withRules, withoutRules) ? withoutRules : withRules;
+                    ApplyRecoveredRows(table, rows);
+                    continue;
                 }
 
-                var rows = RecoverWithRows(groupBoundaries);
-                if (rows.Count == 0
-                    && table.ColumnAnchors.Count > 0
-                    && (ruleYs.Count >= 2 || groupBoundaries.Count > 0 || table.RowAnchors.Count >= table.ColumnAnchors.Count * 2))
-                {
-                    rows = RecoverWithRows(table.ColumnAnchors);
-                }
-                if (rows.Count == 0) continue;
+                // The unified grid failed. A large ruled enclosure can stack
+                // several sub-tables of different column schemas (a form, a
+                // receipt); split it at the vertical-schema transitions and recover
+                // each piece. Replace the region only when at least one piece
+                // becomes a defensible grid, so this can only improve on the raw
+                // fallback the region would otherwise keep.
+                var subBoxes = TableSchemaSegmenter.Split(table.BoundingBox, ruleYs, vRules);
+                if (subBoxes.Count <= 1) continue;
 
-                table.Rows = rows;
-                table.NumberOfRows = rows.Count;
-                table.NumberOfColumns = rows
-                    .SelectMany(r => r.Cells)
-                    .DefaultIfEmpty()
-                    .Max(c => c is null ? 0 : c.ColumnNumber + c.ColumnSpan - 1);
-                table.TextLines = [];
+                var subElements = BuildSubRegionElements(subBoxes, regionWords, vRules, hRules, pageGroup.Key);
+                if (subElements.Any(e => e is Models.TableElement { Rows.Count: > 0 }))
+                    replacements.Add((table, subElements));
             }
         }
+
+        foreach (var (original, news) in replacements)
+        {
+            var index = kids.IndexOf(original);
+            if (index < 0) continue;
+            kids.RemoveAt(index);
+            kids.InsertRange(index, news);
+        }
     }
+
+    /// <summary>Recovers a region's rows, preferring the compact baseline model over a row-rule grid that over-split, and falling back to the detector's column anchors when the rule-based pass found nothing.</summary>
+    private static List<Models.TableRow> RecoverRegionRows(
+        List<TableCellRecovery.Word> words, Models.BoundingBox box,
+        IReadOnlyList<double> groupBoundaries, IReadOnlyList<double> ruleYs,
+        int page, IReadOnlyList<double> columnAnchors, int rowAnchorCount, bool trustDrawnGrid = false)
+    {
+        List<Models.TableRow> RecoverWithRows(IReadOnlyList<double> boundaries)
+        {
+            var withRules = TableCellRecovery.Recover(words, box, boundaries, ruleYs, page, columnAnchors, trustDrawnGrid);
+            if (ruleYs.Count == 0) return withRules;
+
+            var withoutRules = TableCellRecovery.Recover(words, box, boundaries, [], page, columnAnchors, trustDrawnGrid);
+            return PreferCompactRows(withRules, withoutRules) ? withoutRules : withRules;
+        }
+
+        var rows = RecoverWithRows(groupBoundaries);
+        if (rows.Count == 0
+            && columnAnchors.Count > 0
+            && (ruleYs.Count >= 2 || groupBoundaries.Count > 0 || rowAnchorCount >= columnAnchors.Count * 2))
+        {
+            rows = RecoverWithRows(columnAnchors);
+        }
+        return rows;
+    }
+
+    /// <summary>Fills a grid table element from its recovered rows, clearing the raw text the cells now supersede.</summary>
+    private static void ApplyRecoveredRows(Models.TableElement table, List<Models.TableRow> rows)
+    {
+        table.Rows = rows;
+        table.NumberOfRows = rows.Count;
+        table.NumberOfColumns = ColumnCount(rows);
+        table.TextLines = [];
+    }
+
+    /// <summary>
+    /// Recovers each schema sub-region of a split enclosure: a piece whose words
+    /// form a defensible grid becomes a <see cref="Models.TableElement"/>, the rest
+    /// a raw <see cref="Models.RegionElement"/> so no text is dropped.
+    /// </summary>
+    private static List<Models.ContentElement> BuildSubRegionElements(
+        IReadOnlyList<Models.BoundingBox> subBoxes,
+        List<TableCellRecovery.Word> regionWords,
+        IReadOnlyList<Models.BoundingBox> vRules,
+        IReadOnlyList<Models.BoundingBox> hRules,
+        int page)
+    {
+        var elements = new List<Models.ContentElement>();
+        foreach (var box in subBoxes)
+        {
+            var subWords = regionWords.Where(w => Contains(box, w.BoundingBox)).ToList();
+            if (subWords.Count == 0) continue;
+
+            var groupBoundaries = InteriorVerticalRuleCenters(vRules, box);
+            var ruleYs = RegionHorizontalRuleYs(hRules, box);
+
+            // A split sub-region is asserted as a grid only when its columns are
+            // drawn — vertical rules running most of its height (the line-item or
+            // summary band). This is the precise witness that separates a real grid
+            // from a key-value form whose short per-row rules never span the region:
+            // the form would otherwise pass the occupancy gate as a jumbled grid, so
+            // it is kept as raw text instead. Drawn columns also let a grid with a
+            // single sparse data row assert without the occupancy gate.
+            var rows = FullHeightInteriorRuleCount(vRules, box) >= 2
+                ? RecoverRegionRows(subWords, box, groupBoundaries, ruleYs, page, [], 0, trustDrawnGrid: true)
+                : [];
+
+            if (rows.Count > 0)
+            {
+                elements.Add(new Models.TableElement
+                {
+                    PageNumber = page,
+                    BoundingBox = box,
+                    Rows = rows,
+                    NumberOfRows = rows.Count,
+                    NumberOfColumns = ColumnCount(rows),
+                    ColumnAnchors = [.. groupBoundaries],
+                    RowAnchors = [.. ruleYs]
+                });
+            }
+            else
+            {
+                elements.Add(new Models.RegionElement
+                {
+                    PageNumber = page,
+                    BoundingBox = box,
+                    TextLines = RawTextLines(subWords)
+                });
+            }
+        }
+        return elements;
+    }
+
+    /// <summary>
+    /// Counts the interior columns whose vertical rules together span most of the
+    /// region's height — the consistent column separators of a ruled grid. A column
+    /// separator is often drawn as one short segment per row, so the segments at a
+    /// shared x are unioned before measuring; a key-value form's rules cover only a
+    /// fraction of the height and are not counted.
+    /// </summary>
+    private static int FullHeightInteriorRuleCount(
+        IReadOnlyList<Models.BoundingBox> verticalRules, Models.BoundingBox region)
+    {
+        const double interiorMargin = 2.0;
+        const double spanShare = 0.8;
+
+        var interior = verticalRules
+            .Where(rule => rule.Left > region.Left + interiorMargin && rule.Right < region.Right - interiorMargin
+                           && rule.Bottom < region.Top && rule.Top > region.Bottom)
+            .OrderBy(rule => (rule.Left + rule.Right) / 2.0)
+            .ToList();
+
+        var count = 0;
+        var i = 0;
+        while (i < interior.Count)
+        {
+            var x = (interior[i].Left + interior[i].Right) / 2.0;
+            var segments = new List<(double Bottom, double Top)>();
+            while (i < interior.Count && (interior[i].Left + interior[i].Right) / 2.0 - x <= interiorMargin)
+            {
+                segments.Add((Math.Max(interior[i].Bottom, region.Bottom), Math.Min(interior[i].Top, region.Top)));
+                i++;
+            }
+            if (UnionLength(segments) >= spanShare * region.Height) count++;
+        }
+        return count;
+    }
+
+    /// <summary>The total length covered by a set of possibly overlapping y-intervals.</summary>
+    private static double UnionLength(List<(double Bottom, double Top)> intervals)
+    {
+        var ordered = intervals.Where(s => s.Top > s.Bottom).OrderBy(s => s.Bottom).ToList();
+        var total = 0.0;
+        double coveredTo = double.NegativeInfinity;
+        foreach (var (bottom, top) in ordered)
+        {
+            var from = Math.Max(bottom, coveredTo);
+            if (top > from) total += top - from;
+            coveredTo = Math.Max(coveredTo, top);
+        }
+        return total;
+    }
+
+    /// <summary>Joins a sub-region's words into raw text rows, top to bottom, for a region that recovered no grid.</summary>
+    private static List<string> RawTextLines(List<TableCellRecovery.Word> words) =>
+        TableRowGrouping.ClusterBaselineRows(words)
+            .Select(row => string.Join(" ", row.Words
+                .OrderBy(w => w.BoundingBox.Left)
+                .Select(w => w.Text.Trim())
+                .Where(t => t.Length > 0)))
+            .Where(t => t.Length > 0)
+            .ToList();
 
     /// <summary>
     /// Row rules can over-split a table with row spans or wrapped cells. When the
@@ -1523,17 +1678,38 @@ public sealed class PdfStructParser
             .ToList();
     }
 
-    /// <summary>Returns the x-centres of the vertical rules that fall strictly inside the region — the group-band separators.</summary>
+    /// <summary>Returns the x-centres of the vertical rules that fall strictly inside the region — the group-band separators. A separator drawn as one short segment per row contributes many coincident centres, so near-equal x-positions are clustered to one boundary.</summary>
     private static IReadOnlyList<double> InteriorVerticalRuleCenters(
         IReadOnlyList<Models.BoundingBox> verticalRules, Models.BoundingBox region)
     {
         const double interiorMargin = 2.0;
-        return verticalRules
+        const double clusterTolerance = 3.0;
+
+        var centers = verticalRules
             .Where(v => v.Left > region.Left + interiorMargin && v.Right < region.Right - interiorMargin
                         && v.Bottom < region.Top && v.Top > region.Bottom)
             .Select(v => (v.Left + v.Right) / 2.0)
             .OrderBy(x => x)
             .ToList();
+
+        var clustered = new List<double>();
+        var sum = 0.0;
+        var count = 0;
+        var clusterStart = double.NaN;
+        foreach (var x in centers)
+        {
+            if (count > 0 && x - clusterStart > clusterTolerance)
+            {
+                clustered.Add(sum / count);
+                sum = 0;
+                count = 0;
+            }
+            if (count == 0) clusterStart = x;
+            sum += x;
+            count++;
+        }
+        if (count > 0) clustered.Add(sum / count);
+        return clustered;
     }
 
     /// <summary>Returns the y-centres of the full-width horizontal rules within the region — the logical-row boundaries of a ruled grid.</summary>

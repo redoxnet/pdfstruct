@@ -69,6 +69,7 @@ internal static class TableCellRecovery
     /// <param name="horizontalRuleYs">The y-centres of full-width horizontal rules inside the region, used to build logical rows.</param>
     /// <param name="pageNumber">The 1-indexed page the region sits on.</param>
     /// <param name="columnAnchors">Optional detector-provided stable column anchors, used to seed a borderless single-band grid.</param>
+    /// <param name="trustDrawnGrid">When the region's columns are witnessed by drawn vertical rules spanning its height, the grid is trusted without the column-occupancy gate — a ruled sub-table with a single sparse data row is still a grid.</param>
     /// <returns>The recovered rows, top to bottom, or an empty list when no structure could be read.</returns>
     public static List<TableRow> Recover(
         IReadOnlyList<Word> words,
@@ -76,7 +77,8 @@ internal static class TableCellRecovery
         IReadOnlyList<double> groupBoundaries,
         IReadOnlyList<double> horizontalRuleYs,
         int pageNumber,
-        IReadOnlyList<double>? columnAnchors = null)
+        IReadOnlyList<double>? columnAnchors = null,
+        bool trustDrawnGrid = false)
     {
         ArgumentNullException.ThrowIfNull(words);
         ArgumentNullException.ThrowIfNull(groupBoundaries);
@@ -102,11 +104,11 @@ internal static class TableCellRecovery
         }
 
         NormalizeLeadingEmptyColumns(rows);
-        if (IsConfidentGrid(rows)) return rows;
+        if (IsConfidentGrid(rows, requireOccupancy: !trustDrawnGrid)) return rows;
 
         var slotRows = RecoverFromRuledSlots(rowWords, region, groupBoundaries, pageNumber);
         NormalizeLeadingEmptyColumns(slotRows);
-        return IsConfidentGrid(slotRows) ? slotRows : [];
+        return IsConfidentGrid(slotRows, requireOccupancy: !trustDrawnGrid) ? slotRows : [];
     }
 
     /// <summary>
@@ -236,7 +238,9 @@ internal static class TableCellRecovery
     /// or a misaligned block — fails here and falls back to its raw text rather
     /// than emitting a fabricated structure.
     /// </summary>
-    private static bool IsConfidentGrid(List<TableRow> rows)
+    /// <param name="rows">The recovered rows.</param>
+    /// <param name="requireOccupancy">When false, the column-occupancy share is not required — used when the columns are witnessed by drawn vertical rules, so a ruled sub-table with a single sparse data row still asserts as a grid.</param>
+    private static bool IsConfidentGrid(List<TableRow> rows, bool requireOccupancy = true)
     {
         var leafCount = rows
             .SelectMany(r => r.Cells)
@@ -247,6 +251,7 @@ internal static class TableCellRecovery
         var headerRows = HeaderRowCount(rows);
         var body = rows.Skip(headerRows).ToList();
         if (body.Count == 0 || headerRows > body.Count) return false;
+        if (!requireOccupancy) return true;
 
         var occupancy = new int[leafCount];
         foreach (var row in body)
