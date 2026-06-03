@@ -60,7 +60,8 @@ internal static class LogicalRowBuilder
     /// <param name="horizontalRuleYs">The y-centres of full-width horizontal rules inside the region.</param>
     /// <returns>The logical rows, each a list of words, top to bottom.</returns>
     public static List<List<Word>> Build(
-        IReadOnlyList<Word> words, BoundingBox region, IReadOnlyList<double> horizontalRuleYs)
+        IReadOnlyList<Word> words, BoundingBox region, IReadOnlyList<double> horizontalRuleYs,
+        bool trustDrawnGrid = false)
     {
         ArgumentNullException.ThrowIfNull(words);
         ArgumentNullException.ThrowIfNull(horizontalRuleYs);
@@ -68,7 +69,7 @@ internal static class LogicalRowBuilder
         var baselineRows = TableRowGrouping.ClusterBaselineRows(words);
         if (baselineRows.Count <= 1) return baselineRows.Select(r => r.Words.ToList()).ToList();
 
-        if (TryRuleBands(words, region, horizontalRuleYs, baselineRows.Count, out var bandRows))
+        if (TryRuleBands(words, region, horizontalRuleYs, baselineRows.Count, trustDrawnGrid, out var bandRows))
             return bandRows;
 
         return MergeContinuations(baselineRows);
@@ -78,11 +79,15 @@ internal static class LogicalRowBuilder
     /// Buckets words into the bands a regular full-width rule grid draws. Returns
     /// <c>false</c> when the rules are not a per-row grid (too few bands, irregular
     /// heights, or no fewer rows than baseline grouping already found), so the
-    /// booktabs and borderless cases fall through to baseline rows.
+    /// booktabs and borderless cases fall through to baseline rows. A trusted drawn
+    /// grid — one whose columns are ruled full height — lowers the band-count floor:
+    /// its horizontal rules <em>are</em> the row boundaries, so a small ruled cell
+    /// spanning several text baselines (a stacked footer cell) is one row, not one
+    /// row per baseline.
     /// </summary>
     private static bool TryRuleBands(
         IReadOnlyList<Word> words, BoundingBox region, IReadOnlyList<double> horizontalRuleYs,
-        int baselineRowCount, out List<List<Word>> bandRows)
+        int baselineRowCount, bool trustDrawnGrid, out List<List<Word>> bandRows)
     {
         bandRows = [];
 
@@ -91,7 +96,7 @@ internal static class LogicalRowBuilder
             if (boundaries.Count == 0 || boundaries[^1] - y > RuleLevelTolerance) boundaries.Add(y);
 
         var interiorBandCount = boundaries.Count - 1;
-        if (interiorBandCount < MinRuleBands) return false;
+        if (interiorBandCount < (trustDrawnGrid ? 1 : MinRuleBands)) return false;
 
         var buckets = new List<List<Word>>();
         for (var i = 0; i <= boundaries.Count; i++) buckets.Add([]);

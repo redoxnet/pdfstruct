@@ -85,7 +85,7 @@ internal static class TableCellRecovery
         ArgumentNullException.ThrowIfNull(horizontalRuleYs);
         if (words.Count == 0) return [];
 
-        var rowWords = MergeDashOnlyContinuations(SplitStackedRecordRows(LogicalRowBuilder.Build(words, region, horizontalRuleYs)));
+        var rowWords = MergeDashOnlyContinuations(SplitStackedRecordRows(LogicalRowBuilder.Build(words, region, horizontalRuleYs, trustDrawnGrid)));
         var bands = BuildBands(region, groupBoundaries);
         var tolerance = Math.Max(MinColumnCenterTolerance, ColumnCenterToleranceFactor * Median(words.Select(w => w.BoundingBox.Height)));
 
