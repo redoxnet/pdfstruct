@@ -326,7 +326,10 @@ public sealed class PdfStructParser
         }
 
         if (_options.ExcludeHeadersFooters)
+        {
+            pageLines = FilterLineNumberRails(pageLines, pageGeometries);
             pageLines = FilterRunningFurnitureLines(pageLines, pageGeometries);
+        }
 
         var originalPageLines = pageLines.ToDictionary(
             pair => pair.Key,
@@ -1875,6 +1878,39 @@ public sealed class PdfStructParser
             element.ListItems.Add(listItem);
         }
         return element;
+    }
+
+    /// <summary>
+    /// Removes vertical line-number rails — the narrow gutter or margin
+    /// columns of bare digits that legal documents and US patents print
+    /// alongside their body — from each page's line stream. Runs before the
+    /// generic running-furniture filter so the rail's members never reach the
+    /// font-size-bucketed repeat grouping, which the never-drawn glyphs
+    /// patents use for line numbers would fragment and remove only in part.
+    /// Detection is page-local; see <see cref="LineNumberRailDetector"/>.
+    /// </summary>
+    /// <param name="pageLines">Per-page line streams keyed by 1-indexed page number.</param>
+    /// <param name="pageGeometries">Per-page width and height, used to scale the rail's coverage and margin tests.</param>
+    /// <returns>A new per-page dictionary with rail lines removed and document order preserved.</returns>
+    private static Dictionary<int, IReadOnlyList<TextLineBlock>> FilterLineNumberRails(
+        IReadOnlyDictionary<int, IReadOnlyList<TextLineBlock>> pageLines,
+        IReadOnlyDictionary<int, PageGeometry> pageGeometries)
+    {
+        var result = new Dictionary<int, IReadOnlyList<TextLineBlock>>(pageLines.Count);
+        foreach (var (pageNumber, lines) in pageLines)
+        {
+            if (!pageGeometries.TryGetValue(pageNumber, out var geometry))
+            {
+                result[pageNumber] = lines;
+                continue;
+            }
+
+            var rail = LineNumberRailDetector.Detect(lines, geometry.Width, geometry.Height);
+            result[pageNumber] = rail.Count == 0
+                ? lines
+                : lines.Where((_, index) => !rail.Contains(index)).ToList();
+        }
+        return result;
     }
 
     /// <summary>
