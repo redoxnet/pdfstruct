@@ -82,7 +82,7 @@ internal static class ListDetector
 {
     private const int MaxCandidateLookback = 500;
     private const double NearLeftToleranceMultiplier = 4.0;
-    private const double InterLineSpacingMultiplier = 1.2;
+    private const double InterLineSpacingMultiplier = 2.0;
 
     /// <summary>
     /// A line whose font size exceeds the item's start line by more than this

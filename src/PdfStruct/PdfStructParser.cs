@@ -917,7 +917,16 @@ public sealed class PdfStructParser
             if (indexOnPage < 0 || indexOnPage >= lists.Count) continue;
             if (!originalPageLines.TryGetValue(pageNumber, out var pageLines)) continue;
 
-            kids[i] = BuildListElement(lists[indexOnPage], pageNumber, element.Id, pageLines);
+            var paragraphs = BuildNumberedParagraphs(lists[indexOnPage], pageNumber, pageLines);
+            if (paragraphs.Count == 0) continue;
+
+            paragraphs[0].Id = element.Id;
+            kids[i] = paragraphs[0];
+            if (paragraphs.Count > 1)
+            {
+                kids.InsertRange(i + 1, paragraphs.Skip(1));
+                i += paragraphs.Count - 1;
+            }
         }
     }
 
@@ -1852,71 +1861,52 @@ public sealed class PdfStructParser
         && inner.CenterY >= outer.Bottom && inner.CenterY <= outer.Top;
 
     /// <summary>
-    /// Materialises a <see cref="Models.ListElement"/> from a detector
-    /// output. The numbering style is fixed at <c>"ordered"</c> for Phase 1
-    /// and Phase 2 (Arabic-numeric labels only). Per-item children, if any
-    /// were absorbed by the territory walk (Phase 2 § 6), are formed here
-    /// by feeding each item's child line indices through the same
-    /// paragraph-merger function the page-level pipeline uses, then
-    /// wrapping each resulting block as a paragraph element child of the
-    /// list item. Child element identifiers are assigned later by
+    /// Materialises a detected numbered run as a sequence of paragraphs — one
+    /// per item, each carrying its printed marker in
+    /// <see cref="Models.ParagraphElement.Marker"/> with the marker stripped
+    /// from the content. A numbered run (references, <c>1.</c> steps,
+    /// <c>[1]</c> / <c>(1)</c> labels) has the same structure as a patent
+    /// numbered paragraph — marker + body + wrapped continuation — so it is
+    /// emitted as marker-tagged prose rather than a list. This sidesteps the
+    /// list territory/overlap machinery that fragmented such runs (a citation
+    /// DOI wrap or a single→double digit shift split one reference block into
+    /// several, or voided it entirely) and keeps each entry a self-contained,
+    /// retrievable unit. Identifiers are assigned later by
     /// <see cref="RenumberElements"/>.
     /// </summary>
-    private static Models.ListElement BuildListElement(
-        DetectedList list,
+    /// <param name="run">The detected numbered run.</param>
+    /// <param name="pageNumber">1-indexed page the run sits on.</param>
+    /// <param name="pageLines">The page's line stream, indexed by the run's child line indices.</param>
+    /// <returns>One paragraph per run item, in document order.</returns>
+    private static List<Models.ParagraphElement> BuildNumberedParagraphs(
+        DetectedList run,
         int pageNumber,
-        int id,
         IReadOnlyList<TextLineBlock> pageLines)
     {
-        var element = new Models.ListElement
+        var paragraphs = new List<Models.ParagraphElement>(run.Items.Count);
+        foreach (var item in run.Items)
         {
-            Id = id,
-            PageNumber = pageNumber,
-            BoundingBox = list.BoundingBox,
-            NumberingStyle = "ordered",
-            NumberOfListItems = list.Items.Count
-        };
-        foreach (var item in list.Items)
-        {
-            var listItem = new Models.ListItem
-            {
-                BoundingBox = item.BoundingBox,
-                PageNumber = pageNumber,
-                Number = item.Number,
-                Label = item.RawLabel,
-                Text = new Models.TextProperties
-                {
-                    Content = item.Body,
-                    FontSize = list.FontSize,
-                    Font = list.FontName
-                }
-            };
-
+            var content = item.Body;
             if (item.ChildrenLineIndices.Count > 0)
             {
-                var childLines = item.ChildrenLineIndices
-                    .Select(idx => pageLines[idx])
-                    .ToList();
-                var childBlocks = MergeLinesIntoBlocks(childLines);
-                foreach (var block in childBlocks)
-                {
-                    listItem.Kids.Add(new Models.ParagraphElement
-                    {
-                        PageNumber = pageNumber,
-                        BoundingBox = block.BoundingBox,
-                        Text = new Models.TextProperties
-                        {
-                            Content = block.Text,
-                            Font = block.FontName,
-                            FontSize = block.FontSize
-                        }
-                    });
-                }
+                var childText = string.Join("\n", item.ChildrenLineIndices.Select(idx => pageLines[idx].Text));
+                content = content.Length == 0 ? childText : $"{content}\n{childText}";
             }
 
-            element.ListItems.Add(listItem);
+            paragraphs.Add(new Models.ParagraphElement
+            {
+                PageNumber = pageNumber,
+                BoundingBox = item.BoundingBox,
+                Marker = item.RawLabel,
+                Text = new Models.TextProperties
+                {
+                    Content = content,
+                    FontSize = run.FontSize,
+                    Font = run.FontName
+                }
+            });
         }
-        return element;
+        return paragraphs;
     }
 
     /// <summary>
