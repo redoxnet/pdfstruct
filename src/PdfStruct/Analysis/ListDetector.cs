@@ -247,7 +247,13 @@ internal static class ListDetector
 
                 var line = pageLines[j];
                 var tol = SameLeftTolerance(line.FontSize);
-                if (line.Left < startLine.Left - tol) break;
+                // A continuation may sit a marker-width to the LEFT of the item
+                // start when the run is first-line-indented — patent claims print
+                // "3." indented and wrap back to the column margin. Only a line
+                // outdented well beyond that (different structure) ends the
+                // territory; otherwise the wrap would orphan and merge into a
+                // cross-claim blob.
+                if (line.Left < startLine.Left - ContinuationLeftIndent(startLine.FontSize)) break;
                 if (line.FontSize > startLine.FontSize * HeadingFontSizeRatio) break;
                 // A label-looking line only ends the territory when it is left-
                 // aligned with the item start — a genuine sibling/sub-item.
@@ -279,6 +285,14 @@ internal static class ListDetector
     }
 
     private static double SameLeftTolerance(double fontSize) => Math.Max(fontSize, 1.0) / 3.0;
+
+    /// <summary>
+    /// Maximum distance, in points, a continuation line may sit to the left of
+    /// its item's start before it counts as a structural outdent that ends the
+    /// territory. Sized to a marker's first-line indent (≈2 em) so a claim's
+    /// margin-aligned wrap is absorbed while a genuinely outdented block is not.
+    /// </summary>
+    private static double ContinuationLeftIndent(double fontSize) => Math.Max(fontSize, 1.0) * 2.0;
 
     private static int? ParseInt(string s) =>
         int.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : null;
