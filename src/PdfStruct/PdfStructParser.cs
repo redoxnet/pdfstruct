@@ -1217,6 +1217,11 @@ public sealed class PdfStructParser
                     releasedLines.Add(line);
                     regionsWithReleases.Add(i);
                 }
+                foreach (var line in LeadingSpanningTitleLines(claimed[i], contentRegions[i].BoundingBox.Width))
+                {
+                    releasedLines.Add(line);
+                    regionsWithReleases.Add(i);
+                }
                 foreach (var line in TrailingNoteLines(claimed[i]))
                 {
                     releasedLines.Add(line);
@@ -1304,6 +1309,52 @@ public sealed class PdfStructParser
         return text.EndsWith(".", StringComparison.Ordinal)
                || text.EndsWith(";", StringComparison.Ordinal)
                || text.EndsWith(":", StringComparison.Ordinal);
+    }
+
+    /// <summary>Common words whose presence marks a line as flowing prose — a title sentence — rather than a row of column-header tokens.</summary>
+    private static readonly HashSet<string> ProseFunctionWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "in", "the", "and", "of", "for", "with", "by", "to", "on", "from", "at", "a", "an", "based", "between", "per", "as", "into",
+    };
+
+    /// <summary>
+    /// Releases a table-internal spanning title band — one or more leading
+    /// full-width prose lines that sit above the column header (a table's own title
+    /// caught inside the detected box, such as "Average Field Strength … in
+    /// Different Models"). Such a line flows as one wide block of prose rather than
+    /// gap-splitting into column tokens, carries no row data, and is released only
+    /// when a columnar body still follows it, so normal caption/paragraph handling
+    /// attaches it to the table's caption and the grid below recovers cleanly.
+    /// </summary>
+    private static IReadOnlyList<TextLineBlock> LeadingSpanningTitleLines(
+        IReadOnlyList<TextLineBlock> claimed, double regionWidth)
+    {
+        if (claimed.Count < 3 || regionWidth <= 0) return [];
+
+        var rows = GroupClaimRows(claimed);
+        var titleRows = 0;
+        while (titleRows < rows.Count && IsSpanningTitleRow(rows[titleRows], regionWidth)) titleRows++;
+
+        if (titleRows == 0 || rows.Count - titleRows < 2) return [];
+        if (!rows.Skip(titleRows).Any(row => row.Count >= 2)) return [];
+
+        return rows.Take(titleRows).SelectMany(row => row).ToList();
+    }
+
+    /// <summary>True when a row reads as a spanning title: one or two blocks of prose spanning most of the table width, with a function word and no numeric data.</summary>
+    private static bool IsSpanningTitleRow(List<TextLineBlock> row, double regionWidth)
+    {
+        if (row.Count is 0 or > 2) return false;
+
+        var extent = row.Max(b => b.Right) - row.Min(b => b.Left);
+        if (extent < 0.55 * regionWidth) return false;
+
+        var text = string.Join(" ", row.OrderBy(b => b.Left).Select(b => b.Text)).Trim();
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length < 4) return false;
+        if (text.Count(char.IsDigit) >= text.Count(char.IsLetter)) return false;
+
+        return words.Any(w => ProseFunctionWords.Contains(w));
     }
 
     /// <summary>
