@@ -663,28 +663,58 @@ public sealed class PdfStructParser
             .ToList();
 
         var columnGroups = new List<List<TextLineBlock>>(boundaries.Count + 1);
+        var columnIndices = new List<List<int>>(boundaries.Count + 1);
         for (var i = 0; i < boundaries.Count + 1; i++)
-            columnGroups.Add(new List<TextLineBlock>());
-
-        foreach (var line in pageLines)
         {
+            columnGroups.Add(new List<TextLineBlock>());
+            columnIndices.Add(new List<int>());
+        }
+
+        for (var i = 0; i < pageLines.Count; i++)
+        {
+            var line = pageLines[i];
             var center = (line.Left + line.Right) / 2.0;
             var col = 0;
             while (col < boundaries.Count && center > boundaries[col]) col++;
             columnGroups[col].Add(line);
+            columnIndices[col].Add(i);
         }
 
         var mergedLists = new List<DetectedList>();
         var mergedResidual = new List<TextLineBlock>();
-        foreach (var group in columnGroups)
+        for (var col = 0; col < columnGroups.Count; col++)
         {
+            var group = columnGroups[col];
             if (group.Count == 0) continue;
             var detection = ListDetector.Detect(group);
-            mergedLists.AddRange(detection.Lists);
+            // The detector indexes the column-local stream it was given; remap
+            // each list's line indices back to the full page so downstream
+            // consumers that index the page line list resolve the right lines.
+            foreach (var list in detection.Lists)
+                mergedLists.Add(RemapListIndices(list, columnIndices[col]));
             mergedResidual.AddRange(detection.ResidualLines);
         }
 
         return (mergedLists, mergedResidual);
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="list"/> whose every item's start,
+    /// body, and child line indices are translated from column-local
+    /// positions to the original page-line positions via
+    /// <paramref name="originalIndices"/>.
+    /// </summary>
+    private static DetectedList RemapListIndices(DetectedList list, IReadOnlyList<int> originalIndices)
+    {
+        var items = list.Items
+            .Select(item => item with
+            {
+                StartLineIndex = originalIndices[item.StartLineIndex],
+                BodyLineIndices = item.BodyLineIndices.Select(i => originalIndices[i]).ToList(),
+                ChildrenLineIndices = item.ChildrenLineIndices.Select(i => originalIndices[i]).ToList()
+            })
+            .ToList();
+        return list with { Items = items };
     }
 
     /// <summary>

@@ -98,6 +98,27 @@ public class ListDetectorTests
     }
 
     [Fact]
+    public void Detect_LargerFontHeadingBetweenItems_IsNotAbsorbed()
+    {
+        var lines = new[]
+        {
+            Line("[0001] First patent paragraph.", left: 64, baseline: 700, fontSize: 9),
+            Line("continuation of first.", left: 64, baseline: 688, fontSize: 9),
+            Line("배 경 기 술", left: 64, baseline: 660, fontSize: 11),
+            Line("[0002] Second patent paragraph.", left: 64, baseline: 632, fontSize: 9),
+            Line("continuation of second.", left: 64, baseline: 620, fontSize: 9)
+        };
+
+        var result = ListDetector.Detect(lines);
+
+        var list = Assert.Single(result.Lists);
+        Assert.Equal(2, list.Items.Count);
+        var firstItemClaimed = list.Items[0].ClaimedLineIndices.ToHashSet();
+        Assert.DoesNotContain(2, firstItemClaimed); // the heading line index
+        Assert.Contains(result.ResidualLines, l => l.Text == "배 경 기 술");
+    }
+
+    [Fact]
     public void Detect_GroupsSequentialArabicLabels()
     {
         var lines = new[]

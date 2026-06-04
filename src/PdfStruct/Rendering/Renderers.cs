@@ -184,22 +184,20 @@ public sealed class MarkdownRenderer : IDocumentRenderer
             {
                 var marker = item.Label ?? item.Number?.ToString() ?? string.Empty;
                 sb.Append(marker).Append(' ').AppendLine(item.Text.Content);
-                sb.AppendLine();
-                // Continuation text is paragraph prose, not nested list
-                // content, so it renders flush — a four-space indent would
-                // turn it into a Markdown code block.
+                // A numbered paragraph is one prose block: its continuation
+                // lines render flush and tight against the first line (a
+                // four-space indent would become a Markdown code block, and a
+                // blank line between them would split one paragraph into many).
+                // A single blank line closes the whole paragraph.
                 foreach (var child in item.Kids)
                 {
                     if (child is ParagraphElement p)
-                    {
-                        sb.AppendLine(p.Text.Content);
-                        sb.AppendLine();
-                    }
+                        foreach (var line in p.Text.Content.Split('\n'))
+                            sb.AppendLine(line);
                     else
-                    {
                         RenderListItemChild(child, sb);
-                    }
                 }
+                sb.AppendLine();
             }
             return;
         }

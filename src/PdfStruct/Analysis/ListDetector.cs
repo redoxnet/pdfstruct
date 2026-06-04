@@ -86,6 +86,15 @@ internal static class ListDetector
     private const double NearLeftToleranceMultiplier = 4.0;
     private const double InterLineSpacingMultiplier = 1.2;
 
+    /// <summary>
+    /// A line whose font size exceeds the item's start line by more than this
+    /// factor ends the item's territory: it is a heading or section break, not
+    /// continuation. Guards numbered-paragraph runs (patent <c>[0001]</c>...)
+    /// from swallowing an intervening section heading such as
+    /// <c>배 경 기 술</c>.
+    /// </summary>
+    private const double HeadingFontSizeRatio = 1.1;
+
     private static readonly Regex s_parenLabel = new(
         @"^\(\s*(\d+)\s*\)\s+",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -241,6 +250,7 @@ internal static class ListDetector
                 var line = pageLines[j];
                 var tol = SameLeftTolerance(line.FontSize);
                 if (line.Left < startLine.Left - tol) break;
+                if (line.FontSize > startLine.FontSize * HeadingFontSizeRatio) break;
                 if (TryParseLabel(line.Text) is not null) break;
 
                 if (bodyMode)
