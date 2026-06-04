@@ -287,6 +287,28 @@ internal static class ListDetector
     private static double SameLeftTolerance(double fontSize) => Math.Max(fontSize, 1.0) / 3.0;
 
     /// <summary>
+    /// Approximate width of one marker digit as a fraction of the font size.
+    /// When a numbered run rolls a digit (9→10, 99→100) the marker is right-
+    /// aligned on its terminator, so the left edge slides left by about one
+    /// digit width — a legitimate shift that must not break the run's
+    /// strict-left-alignment streak.
+    /// </summary>
+    private const double MarkerDigitWidthRatio = 0.6;
+
+    /// <summary>
+    /// Extra left-edge tolerance (PDF points) granted when <paramref name="label"/>
+    /// carries more printed digits than <paramref name="lastLabel"/> and the new
+    /// line sits to the left of <paramref name="lastLine"/> — the expected slide
+    /// of a right-aligned marker as it rolls to a wider number. Zero otherwise.
+    /// </summary>
+    private static double DigitGrowthLeftTolerance(TextLineBlock line, ListLabel label, TextLineBlock lastLine, ListLabel lastLabel)
+    {
+        var extraDigits = label.DigitText.Length - lastLabel.DigitText.Length;
+        if (extraDigits <= 0 || line.Left >= lastLine.Left) return 0.0;
+        return extraDigits * Math.Max(lastLine.FontSize, 1.0) * MarkerDigitWidthRatio;
+    }
+
+    /// <summary>
     /// Maximum distance, in points, a continuation line may sit to the left of
     /// its item's start before it counts as a structural outdent that ends the
     /// territory. Sized to a marker's first-line indent (≈2 em) so a claim's
@@ -327,7 +349,7 @@ internal static class ListDetector
             if (last.Label.Terminator != label.Terminator) return false;
             if (label.Number != last.Label.Number + 1) return false;
 
-            var tol = SameLeftTolerance(last.Line.FontSize);
+            var tol = SameLeftTolerance(last.Line.FontSize) + DigitGrowthLeftTolerance(line, label, last.Line, last.Label);
             var diff = Math.Abs(line.Left - last.Line.Left);
             var sameLeft = diff <= tol;
             var nearLeft = diff <= NearLeftToleranceMultiplier * tol;
@@ -341,7 +363,7 @@ internal static class ListDetector
         public void Append(int lineIndex, TextLineBlock line, ListLabel label, int labelLength)
         {
             var last = _items[^1];
-            var tol = SameLeftTolerance(last.Line.FontSize);
+            var tol = SameLeftTolerance(last.Line.FontSize) + DigitGrowthLeftTolerance(line, label, last.Line, last.Label);
             var sameLeft = Math.Abs(line.Left - last.Line.Left) <= tol;
             if (!sameLeft) _everyTransitionWasStrictSameLeft = false;
 

@@ -66,4 +66,31 @@ public class NumberedParagraphFixtureTests
         Assert.Contains("1.", markers);
         Assert.Contains("9.", markers);
     }
+
+    [Fact]
+    public void RightAlignedMarkers_SurviveDigitRoll_AtColumnBottom()
+    {
+        // plos_game references use right-aligned markers, so "10." sits a digit
+        // width left of "1."…"9.". The run extension must tolerate that slide;
+        // otherwise reference 10 — the last item of the left column — escapes
+        // the run and its bold first line is misread as a heading.
+        var result = new PdfStructParser().Parse(FixturePath("plos_game_based_education.pdf"));
+
+        var markerParagraphs = result.Document.Kids
+            .OfType<ParagraphElement>()
+            .Where(p => p.Marker is not null)
+            .ToList();
+
+        var tenth = markerParagraphs.FirstOrDefault(p => p.Marker == "10.");
+        Assert.NotNull(tenth);
+        Assert.StartsWith("Martos-Cabrera", tenth!.Text.Content);
+        // The wrapped continuation across the column break is absorbed, not orphaned.
+        Assert.Contains("PMID: 32143452", tenth.Text.Content);
+
+        // Reference 10 is not left as a heading.
+        var numberedHeadings = result.Document.Kids
+            .OfType<HeadingElement>()
+            .Where(h => Regex.IsMatch(h.Text.Content, @"^\d+\.\s"));
+        Assert.Empty(numberedHeadings);
+    }
 }
