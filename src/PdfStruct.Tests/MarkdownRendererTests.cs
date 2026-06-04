@@ -56,6 +56,45 @@ public class MarkdownRendererTests
         Assert.Contains("|   | 42 |", markdown);
     }
 
+    [Fact]
+    public void RenderList_UsesItemLabelNumber_NotPositionalCounter()
+    {
+        // A reference list that resumes after an interruption keeps its true
+        // numbering ([6], [7], ...) instead of restarting at 1.
+        var list = new ListElement { NumberingStyle = "ordered" };
+        list.ListItems.Add(ListItemWith(6, "Sixth author. A paper."));
+        list.ListItems.Add(ListItemWith(7, "Seventh author. Another paper."));
+        var document = new PdfDocument();
+        document.Kids.Add(list);
+
+        var markdown = new MarkdownRenderer().Render(document);
+
+        Assert.Contains("6. Sixth author. A paper.", markdown);
+        Assert.Contains("7. Seventh author. Another paper.", markdown);
+        Assert.DoesNotContain("1. Sixth author", markdown);
+    }
+
+    [Fact]
+    public void RenderList_FallsBackToPosition_WhenNumberMissing()
+    {
+        var list = new ListElement { NumberingStyle = "ordered" };
+        list.ListItems.Add(ListItemWith(null, "First"));
+        list.ListItems.Add(ListItemWith(null, "Second"));
+        var document = new PdfDocument();
+        document.Kids.Add(list);
+
+        var markdown = new MarkdownRenderer().Render(document);
+
+        Assert.Contains("1. First", markdown);
+        Assert.Contains("2. Second", markdown);
+    }
+
+    private static ListItem ListItemWith(int? number, string content) => new()
+    {
+        Number = number,
+        Text = new TextProperties { Content = content }
+    };
+
     private static TableRow Row(int number, params TableCell[] cells)
     {
         var row = new TableRow { RowNumber = number };

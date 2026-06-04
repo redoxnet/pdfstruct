@@ -179,7 +179,7 @@ public sealed class MarkdownRenderer : IDocumentRenderer
         for (int i = 0; i < list.ListItems.Count; i++)
         {
             var item = list.ListItems[i];
-            sb.Append(ordered ? $"{i + 1}." : "-");
+            sb.Append(ordered ? $"{item.Number ?? i + 1}." : "-");
             sb.Append(' ').AppendLine(item.Text.Content);
             foreach (var child in item.Kids)
                 RenderListItemChild(child, sb);
@@ -328,6 +328,7 @@ public sealed class JsonRenderer : IDocumentRenderer
                         ["text color"] = item.Text.TextColor,
                         ["content"] = item.Text.Content
                     };
+                    if (item.Number.HasValue) itemDict["number"] = item.Number.Value;
                     if (item.Kids.Count > 0)
                         itemDict["kids"] = item.Kids.Select(ToOdlElement).ToList();
                     return itemDict;

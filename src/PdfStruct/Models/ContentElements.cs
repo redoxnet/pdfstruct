@@ -227,6 +227,15 @@ public sealed class ListItem
     /// <summary>Gets or sets the text properties.</summary>
     public TextProperties Text { get; set; } = new();
 
+    /// <summary>
+    /// Gets or sets the integer label recovered from this item's marker
+    /// (<c>6</c> for <c>[6]</c> or <c>6.</c>), or <c>null</c> for an
+    /// unnumbered (bullet) item. Renderers emit this rather than a positional
+    /// counter, so a list that resumes after an interruption keeps its true
+    /// numbering instead of restarting at one.
+    /// </summary>
+    public int? Number { get; set; }
+
     /// <summary>Gets nested content elements (e.g., sub-lists).</summary>
     public List<ContentElement> Kids { get; set; } = [];
 }

@@ -1845,6 +1845,7 @@ public sealed class PdfStructParser
             {
                 BoundingBox = item.BoundingBox,
                 PageNumber = pageNumber,
+                Number = item.Number,
                 Text = new Models.TextProperties
                 {
                     Content = item.Body,
