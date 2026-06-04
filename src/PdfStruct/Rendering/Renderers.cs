@@ -180,14 +180,26 @@ public sealed class MarkdownRenderer : IDocumentRenderer
         // collapsed to a Markdown ordered-list counter.
         if (list.NumberingStyle == "numbered-paragraph")
         {
-            for (int i = 0; i < list.ListItems.Count; i++)
+            foreach (var item in list.ListItems)
             {
-                var item = list.ListItems[i];
                 var marker = item.Label ?? item.Number?.ToString() ?? string.Empty;
                 sb.Append(marker).Append(' ').AppendLine(item.Text.Content);
                 sb.AppendLine();
+                // Continuation text is paragraph prose, not nested list
+                // content, so it renders flush — a four-space indent would
+                // turn it into a Markdown code block.
                 foreach (var child in item.Kids)
-                    RenderListItemChild(child, sb);
+                {
+                    if (child is ParagraphElement p)
+                    {
+                        sb.AppendLine(p.Text.Content);
+                        sb.AppendLine();
+                    }
+                    else
+                    {
+                        RenderListItemChild(child, sb);
+                    }
+                }
             }
             return;
         }
