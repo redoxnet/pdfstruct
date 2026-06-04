@@ -2840,7 +2840,7 @@ public sealed class PdfStructParser
     /// </summary>
     private static TextBlock MergeLines(List<TextLineBlock> lines)
     {
-        var text = string.Join("\n", lines.Select(l => l.Text));
+        var text = Analysis.TextNormalization.RepairHyphenatedBreak(string.Join("\n", lines.Select(l => l.Text)));
         var bbox = lines.Select(l => l.BoundingBox).Aggregate((a, b) => a.Merge(b));
         var first = lines[0];
         var last = lines[^1];
@@ -3015,8 +3015,9 @@ public sealed class PdfStructParser
         /// </summary>
         public int FontWeight => FirstFontDetails?.Weight ?? (IsBold ? 700 : 400);
 
-        /// <summary>Visible text of the line, with word boundaries reordered left-to-right and joined by spaces.</summary>
-        public string Text => string.Join(" ", _words.OrderBy(w => w.BoundingBox.Left).Select(w => w.Text));
+        /// <summary>Visible text of the line, with word boundaries reordered left-to-right, joined by spaces, and hyphenated word fragments closed up.</summary>
+        public string Text => Analysis.TextNormalization.RepairHyphenatedBreak(
+            string.Join(" ", _words.OrderBy(w => w.BoundingBox.Left).Select(w => w.Text)));
 
         /// <summary>Axis-aligned line bounding box derived from the per-word extents.</summary>
         public Models.BoundingBox Bbox => new(Left, Bottom, Right, Top);

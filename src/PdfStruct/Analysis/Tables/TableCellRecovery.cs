@@ -507,9 +507,9 @@ internal static class TableCellRecovery
     {
         var box = words[0].BoundingBox;
         foreach (var word in words.Skip(1)) box = box.Merge(word.BoundingBox);
-        var text = string.Join(" ", WordsInReadingOrder(words)
+        var text = TextNormalization.RepairHyphenatedBreak(string.Join(" ", WordsInReadingOrder(words)
             .Select(w => w.Text.Trim())
-            .Where(t => t.Length > 0));
+            .Where(t => t.Length > 0)));
 
         return new TableCell
         {
