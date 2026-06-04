@@ -254,7 +254,13 @@ internal static class ListDetector
                 var tol = SameLeftTolerance(line.FontSize);
                 if (line.Left < startLine.Left - tol) break;
                 if (line.FontSize > startLine.FontSize * HeadingFontSizeRatio) break;
-                if (TryParseLabel(line.Text) is not null) break;
+                // A label-looking line only ends the territory when it is left-
+                // aligned with the item start — a genuine sibling/sub-item.
+                // A label shape further right is continuation that merely opens
+                // with digits-and-dot (a citation's trailing page number such as
+                // "109. https://doi.org/..."); absorbing it keeps the reference
+                // whole and stops a stray fragment from later voiding the list.
+                if (line.Left <= startLine.Left + tol && TryParseLabel(line.Text) is not null) break;
 
                 if (bodyMode)
                 {
