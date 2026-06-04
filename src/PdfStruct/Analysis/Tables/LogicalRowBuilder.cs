@@ -126,10 +126,15 @@ internal static class LogicalRowBuilder
     /// omit the interior rule between consecutive body records. Split only when
     /// multiple baselines in the same band each open the anchor column and at
     /// least one data column; label-only baselines remain wrapped cell text.
+    /// A band that carries no short value cells is a single multi-line text cell —
+    /// a wrapped label and its prose description, where the second line also opens
+    /// the left column — and is never split, so a two-line entry stays one row.
     /// </summary>
     private static List<List<Word>> SplitRuleBands(List<List<Word>> bands) =>
         TableRowGrouping.SplitStackedRecords(bands, band =>
         {
+            if (!band.Any(w => TableRowGrouping.LooksLikeShortValue(w.Text))) return _ => false;
+
             var tolerance = Math.Max(MinColumnTolerance, ColumnToleranceFactor * Median(band.Select(w => w.BoundingBox.Height)));
             var anchor = band.Min(w => w.BoundingBox.CenterX);
             return words =>

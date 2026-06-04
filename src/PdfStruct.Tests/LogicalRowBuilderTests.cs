@@ -117,6 +117,32 @@ public class LogicalRowBuilderTests
         Assert.Equal(["Bob", "82"], rows[1].Select(w => w.Text).ToArray());
     }
 
+    [Fact]
+    public void Build_RuledGrid_AllProseWrappedEntry_StaysOneRow()
+    {
+        // An entry whose label and its description both wrap to a second line — so
+        // the second baseline also opens the left column — is one multi-line cell,
+        // not two records. With no short value cells anywhere in the band, the band
+        // carries prose, not data records, and must not be split.
+        var ruleYs = new List<double> { 712, 690, 668, 646 };
+        var words = new List<TableCellRecovery.Word>
+        {
+            W("Item", 80, 705), W("summary", 200, 705),
+            W("Gemini", 80, 683), W("a", 180, 683), W("world", 230, 683),
+            W("Omni", 80, 675), W("model", 180, 675), W("description", 235, 675),
+            W("Spark", 80, 657), W("agent", 200, 657),
+        };
+        var region = new BoundingBox(60, 646, 300, 712);
+
+        var rows = LogicalRowBuilder.Build(words, region, ruleYs);
+
+        Assert.Equal(3, rows.Count);
+        var entry = rows[1].Select(w => w.Text).ToList();
+        Assert.Contains("Gemini", entry);
+        Assert.Contains("Omni", entry);
+        Assert.Contains("description", entry);
+    }
+
     private static TableCellRecovery.Word W(string text, double centerX, double centerY, double width = 24, double height = 8) =>
         new(new BoundingBox(centerX - width / 2, centerY - height / 2, centerX + width / 2, centerY + height / 2), text);
 }

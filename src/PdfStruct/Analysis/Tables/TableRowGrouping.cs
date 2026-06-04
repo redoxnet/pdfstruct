@@ -22,6 +22,20 @@ internal static class TableRowGrouping
     /// <summary>A set of words sharing a baseline, with that baseline's y-position.</summary>
     internal sealed record BaselineRow(double Baseline, IReadOnlyList<Word> Words);
 
+    /// <summary>
+    /// True when a word reads as a short value cell — a number, percentage,
+    /// statistic, or a dash placeholder — rather than prose. Used to tell a stack
+    /// of data records (short values) from a single multi-line cell of wrapped text
+    /// (no values), which must not be split into rows.
+    /// </summary>
+    public static bool LooksLikeShortValue(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0) return false;
+        if (trimmed is "-" or "–" or "—") return true;
+        return trimmed.All(c => char.IsDigit(c) || c is '.' or ',' or '%' or '*' or '+' or '-' or '(' or ')');
+    }
+
     /// <summary>Clusters words into baseline rows, top to bottom.</summary>
     /// <param name="words">The words to group.</param>
     /// <returns>The baseline rows, top to bottom; each row's <see cref="BaselineRow.Baseline"/> is its mean centre-y.</returns>
