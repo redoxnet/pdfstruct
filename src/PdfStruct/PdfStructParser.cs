@@ -752,8 +752,7 @@ public sealed class PdfStructParser
         foreach (var page in pageLists.Keys.ToList())
         {
             var lists = pageLists[page];
-            var residualBlocks = MergeLinesIntoBlocks(pageResidualLines[page]);
-            var rejected = IdentifyInvariantViolators(lists, residualBlocks);
+            var rejected = IdentifyInvariantViolators(lists);
             if (rejected.Count == 0) continue;
 
             var kept = lists.Where(list => !rejected.Contains(list)).ToList();
@@ -775,14 +774,17 @@ public sealed class PdfStructParser
     }
 
     /// <summary>
-    /// Identifies which confirmed lists violate the structural invariants
-    /// of detector output: pairwise sibling-list bounding-box disjointness,
-    /// and the absence of any provisional paragraph block substantially
-    /// contained within a list's bounding box.
+    /// Identifies which confirmed runs violate the one remaining structural
+    /// invariant: pairwise sibling bounding-box disjointness. Two runs whose
+    /// boxes overlap signal a column the structural-cut pass failed to split —
+    /// one run's territory has bled across the gutter into the other — so both
+    /// are rejected and their lines returned to the residual stream rather than
+    /// emitted with interleaved content. (Containment of a stray paragraph is
+    /// no longer a violation: numbered runs render as individual paragraphs,
+    /// not one bounding-box-owning list, so an unrelated block sharing their
+    /// vertical span is harmless.)
     /// </summary>
-    private static HashSet<DetectedList> IdentifyInvariantViolators(
-        IReadOnlyList<DetectedList> lists,
-        IReadOnlyList<TextBlock> provisionalParagraphs)
+    private static HashSet<DetectedList> IdentifyInvariantViolators(IReadOnlyList<DetectedList> lists)
     {
         var rejected = new HashSet<DetectedList>();
 
@@ -798,39 +800,7 @@ public sealed class PdfStructParser
             }
         }
 
-        foreach (var list in lists)
-        {
-            if (rejected.Contains(list)) continue;
-            foreach (var paragraph in provisionalParagraphs)
-            {
-                if (BoundingBoxSubstantiallyContains(list.BoundingBox, paragraph.BoundingBox))
-                {
-                    rejected.Add(list);
-                    break;
-                }
-            }
-        }
-
         return rejected;
-    }
-
-    /// <summary>
-    /// Returns <c>true</c> when at least 80% of <paramref name="inner"/>'s
-    /// area falls inside <paramref name="container"/>. Used by the
-    /// reconciliation pass to detect paragraphs that share a list's
-    /// bounding-box interior.
-    /// </summary>
-    private static bool BoundingBoxSubstantiallyContains(Models.BoundingBox container, Models.BoundingBox inner)
-    {
-        var overlapLeft = Math.Max(container.Left, inner.Left);
-        var overlapRight = Math.Min(container.Right, inner.Right);
-        var overlapBottom = Math.Max(container.Bottom, inner.Bottom);
-        var overlapTop = Math.Min(container.Top, inner.Top);
-        if (overlapRight <= overlapLeft || overlapTop <= overlapBottom) return false;
-
-        var overlapArea = (overlapRight - overlapLeft) * (overlapTop - overlapBottom);
-        var innerArea = inner.Width * inner.Height;
-        return innerArea > 0 && overlapArea / innerArea >= 0.8;
     }
 
     /// <summary>

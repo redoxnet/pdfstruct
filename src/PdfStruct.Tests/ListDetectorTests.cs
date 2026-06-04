@@ -63,10 +63,10 @@ public class ListDetectorTests
     }
 
     [Fact]
-    public void Detect_BracketedZeroPaddedRun_IsNotClaimedAsList()
+    public void Detect_BracketedZeroPaddedRun_IsDetectedWithVerbatimLabels()
     {
-        // Patent numbered paragraphs are prose, handled downstream as
-        // ParagraphElements with a marker — not ordered lists.
+        // Patent paragraph numbers go through the same detection as any numbered
+        // run; downstream they are materialised as marker-tagged paragraphs.
         var lines = new[]
         {
             Line("[0001] First patent paragraph.", left: 64, baseline: 700),
@@ -76,8 +76,9 @@ public class ListDetectorTests
 
         var result = ListDetector.Detect(lines);
 
-        Assert.Empty(result.Lists);
-        Assert.Equal(3, result.ResidualLines.Count);
+        var run = Assert.Single(result.Lists);
+        Assert.Equal("[0001]", run.Items[0].RawLabel);
+        Assert.Equal("[0003]", run.Items[2].RawLabel);
     }
 
     [Fact]

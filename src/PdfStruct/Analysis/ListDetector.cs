@@ -146,11 +146,6 @@ internal static class ListDetector
         {
             if (candidate.ItemCount < 2) continue;
             if (candidate.AllLabelsLookLikeDecimals(s_decimalLabel)) continue;
-            // Bracketed zero-padded runs ([0001], [0002], ...) are patent
-            // numbered paragraphs, not list items: leave them in the residual
-            // so the normal paragraph merger groups each by its own body flow
-            // and a stray marker never swallows an intervening heading.
-            if (candidate.IsNumberedParagraphRun()) continue;
 
             AbsorbTerritories(candidate, pageLines, claimed);
             foreach (var lineIndex in candidate.AllClaimedLineIndices()) claimed.Add(lineIndex);
@@ -385,25 +380,6 @@ internal static class ListDetector
                 FontName: first.Line.FontName);
         }
 
-        /// <summary>
-        /// Returns <c>true</c> when every label is a bracketed zero-padded
-        /// fixed-width number (patent <c>[0001]</c>...). Such runs are numbered
-        /// paragraphs handled as prose, not ordered lists; the zero-padded
-        /// width cleanly separates them from academic <c>[1]</c> references,
-        /// which are one or two unpadded digits.
-        /// </summary>
-        public bool IsNumberedParagraphRun()
-        {
-            const int minParagraphLabelWidth = 4;
-            foreach (var item in _items)
-            {
-                if (item.Label.Prefix != "[" || item.Label.Terminator != ']')
-                    return false;
-                if (item.Label.DigitText.Length < minParagraphLabelWidth)
-                    return false;
-            }
-            return true;
-        }
     }
 
     /// <summary>
