@@ -236,6 +236,14 @@ public sealed class ListItem
     /// </summary>
     public int? Number { get; set; }
 
+    /// <summary>
+    /// Gets or sets the original label token exactly as printed
+    /// (<c>[0001]</c>, <c>[6]</c>, <c>6.</c>), or <c>null</c> for a bullet
+    /// item. Lets a consumer recover the verbatim marker — essential for
+    /// numbered paragraphs, whose zero-padded number is meaningful.
+    /// </summary>
+    public string? Label { get; set; }
+
     /// <summary>Gets nested content elements (e.g., sub-lists).</summary>
     public List<ContentElement> Kids { get; set; } = [];
 }

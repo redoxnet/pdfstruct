@@ -175,6 +175,23 @@ public sealed class MarkdownRenderer : IDocumentRenderer
 
     private static void RenderList(ListElement list, StringBuilder sb)
     {
+        // Numbered paragraphs (patent [0001] runs) are prose, not list items:
+        // each renders as its own paragraph keeping its printed marker, never
+        // collapsed to a Markdown ordered-list counter.
+        if (list.NumberingStyle == "numbered-paragraph")
+        {
+            for (int i = 0; i < list.ListItems.Count; i++)
+            {
+                var item = list.ListItems[i];
+                var marker = item.Label ?? item.Number?.ToString() ?? string.Empty;
+                sb.Append(marker).Append(' ').AppendLine(item.Text.Content);
+                sb.AppendLine();
+                foreach (var child in item.Kids)
+                    RenderListItemChild(child, sb);
+            }
+            return;
+        }
+
         var ordered = list.NumberingStyle is "ordered" or "decimal" or "roman";
         for (int i = 0; i < list.ListItems.Count; i++)
         {
@@ -329,6 +346,7 @@ public sealed class JsonRenderer : IDocumentRenderer
                         ["content"] = item.Text.Content
                     };
                     if (item.Number.HasValue) itemDict["number"] = item.Number.Value;
+                    if (item.Label is not null) itemDict["label"] = item.Label;
                     if (item.Kids.Count > 0)
                         itemDict["kids"] = item.Kids.Select(ToOdlElement).ToList();
                     return itemDict;

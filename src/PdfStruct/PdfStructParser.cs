@@ -331,6 +331,8 @@ public sealed class PdfStructParser
             pageLines = FilterRunningFurnitureLines(pageLines, pageGeometries);
         }
 
+        pageLines = AssociateNumberedParagraphRails(pageLines);
+
         var originalPageLines = pageLines.ToDictionary(
             pair => pair.Key,
             pair => (IReadOnlyList<TextLineBlock>)pair.Value.ToList());
@@ -1836,7 +1838,7 @@ public sealed class PdfStructParser
             Id = id,
             PageNumber = pageNumber,
             BoundingBox = list.BoundingBox,
-            NumberingStyle = "ordered",
+            NumberingStyle = list.Kind,
             NumberOfListItems = list.Items.Count
         };
         foreach (var item in list.Items)
@@ -1846,6 +1848,7 @@ public sealed class PdfStructParser
                 BoundingBox = item.BoundingBox,
                 PageNumber = pageNumber,
                 Number = item.Number,
+                Label = item.RawLabel,
                 Text = new Models.TextProperties
                 {
                     Content = item.Body,
@@ -1911,6 +1914,24 @@ public sealed class PdfStructParser
                 ? lines
                 : lines.Where((_, index) => !rail.Contains(index)).ToList();
         }
+        return result;
+    }
+
+    /// <summary>
+    /// Folds split numbered-paragraph markers back onto their body lines on
+    /// each page, so a patent paragraph number printed in a left rail
+    /// (<c>[0001]</c>) is rejoined with the text it labels before list
+    /// detection and paragraph merging run. See
+    /// <see cref="NumberedParagraphRailAssociator"/>.
+    /// </summary>
+    /// <param name="pageLines">Per-page line streams keyed by 1-indexed page number.</param>
+    /// <returns>A new per-page dictionary with markers rejoined to their bodies.</returns>
+    private static Dictionary<int, IReadOnlyList<TextLineBlock>> AssociateNumberedParagraphRails(
+        IReadOnlyDictionary<int, IReadOnlyList<TextLineBlock>> pageLines)
+    {
+        var result = new Dictionary<int, IReadOnlyList<TextLineBlock>>(pageLines.Count);
+        foreach (var (pageNumber, lines) in pageLines)
+            result[pageNumber] = NumberedParagraphRailAssociator.Associate(lines);
         return result;
     }
 

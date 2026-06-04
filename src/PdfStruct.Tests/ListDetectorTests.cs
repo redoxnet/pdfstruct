@@ -54,6 +54,50 @@ public class ListDetectorTests
     }
 
     [Fact]
+    public void TryParseLabel_PreservesPrintedDigitsIncludingLeadingZeros()
+    {
+        var parsed = ListDetector.TryParseLabel("[0001] Patent paragraph body");
+        Assert.NotNull(parsed);
+        Assert.Equal("0001", parsed!.Value.Label.DigitText);
+        Assert.Equal(1, parsed.Value.Label.Number);
+    }
+
+    [Fact]
+    public void Detect_BracketedZeroPaddedRun_IsNumberedParagraphWithVerbatimLabels()
+    {
+        var lines = new[]
+        {
+            Line("[0001] First patent paragraph.", left: 64, baseline: 700),
+            Line("[0002] Second patent paragraph.", left: 64, baseline: 660),
+            Line("[0003] Third patent paragraph.", left: 64, baseline: 620)
+        };
+
+        var result = ListDetector.Detect(lines);
+
+        var list = Assert.Single(result.Lists);
+        Assert.Equal("numbered-paragraph", list.Kind);
+        Assert.Equal("[0001]", list.Items[0].RawLabel);
+        Assert.Equal("[0003]", list.Items[2].RawLabel);
+    }
+
+    [Fact]
+    public void Detect_BracketedSingleDigitReferences_StayOrdered()
+    {
+        var lines = new[]
+        {
+            Line("[1] Almazan et al. Word spotting.", left: 50, baseline: 700),
+            Line("[2] Bahdanau et al. Neural machine translation.", left: 50, baseline: 660),
+            Line("[3] Bissacco et al. Photoocr.", left: 50, baseline: 620)
+        };
+
+        var result = ListDetector.Detect(lines);
+
+        var list = Assert.Single(result.Lists);
+        Assert.Equal("ordered", list.Kind);
+        Assert.Equal("[1]", list.Items[0].RawLabel);
+    }
+
+    [Fact]
     public void Detect_GroupsSequentialArabicLabels()
     {
         var lines = new[]

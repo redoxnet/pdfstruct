@@ -17,7 +17,8 @@ namespace PdfStruct.Analysis;
 /// <param name="Prefix">Characters appearing before the digit run (empty, <c>(</c>, or <c>[</c>).</param>
 /// <param name="Number">The integer recovered from the digit run.</param>
 /// <param name="Terminator">Single non-digit character that terminates the label (e.g. <c>.</c>, <c>)</c>, <c>]</c>, <c>:</c>, <c>;</c>).</param>
-internal readonly record struct ListLabel(string Prefix, int Number, char Terminator);
+/// <param name="DigitText">The raw digit run exactly as printed, preserving leading zeros (e.g. <c>0001</c>); the source of truth for the original label token.</param>
+internal readonly record struct ListLabel(string Prefix, int Number, char Terminator, string DigitText);
 
 /// <summary>
 /// One member of a detected list run.
@@ -28,13 +29,15 @@ internal readonly record struct ListLabel(string Prefix, int Number, char Termin
 /// <param name="StartLineIndex">Index of the start line within the page's text-line sequence.</param>
 /// <param name="BodyLineIndices">Page-line indices absorbed as body continuation of the item (the start line plus any continuation lines).</param>
 /// <param name="ChildrenLineIndices">Page-line indices absorbed as children of the item. Phase 2 territory walk; empty for the last item of any list.</param>
+/// <param name="RawLabel">The original label token exactly as printed, including delimiters and leading zeros (e.g. <c>[0001]</c>, <c>[6]</c>, <c>6.</c>).</param>
 internal sealed record DetectedListItem(
     int Number,
     string Body,
     BoundingBox BoundingBox,
     int StartLineIndex,
     IReadOnlyList<int> BodyLineIndices,
-    IReadOnlyList<int> ChildrenLineIndices)
+    IReadOnlyList<int> ChildrenLineIndices,
+    string RawLabel)
 {
     /// <summary>Every page-line index owned by this item, body and children combined, in original document order.</summary>
     public IEnumerable<int> ClaimedLineIndices =>
@@ -50,13 +53,15 @@ internal sealed record DetectedListItem(
 /// <param name="BoundingBox">Union of every item's bounding box.</param>
 /// <param name="FontSize">Font size of the first item's start line, propagated for downstream layout reasoning.</param>
 /// <param name="FontName">Font name of the first item's start line.</param>
+/// <param name="Kind">The run's semantic kind: <c>"ordered"</c> for an ordinary numbered list or references, or <c>"numbered-paragraph"</c> for bracketed zero-padded paragraph labels (patent <c>[0001]</c> runs) that must keep their printed marker rather than be Markdown-renumbered.</param>
 internal sealed record DetectedList(
     string CommonPrefix,
     char Terminator,
     IReadOnlyList<DetectedListItem> Items,
     BoundingBox BoundingBox,
     double FontSize,
-    string FontName);
+    string FontName,
+    string Kind);
 
 /// <summary>
 /// Per-page output of <see cref="ListDetector.Detect"/>.
@@ -166,7 +171,7 @@ internal static class ListDetector
         {
             var n = ParseInt(paren.Groups[1].Value);
             if (n is null) return null;
-            return (new ListLabel("(", n.Value, ')'), paren.Length);
+            return (new ListLabel("(", n.Value, ')', paren.Groups[1].Value), paren.Length);
         }
 
         var bracket = s_bracketLabel.Match(text);
@@ -174,7 +179,7 @@ internal static class ListDetector
         {
             var n = ParseInt(bracket.Groups[1].Value);
             if (n is null) return null;
-            return (new ListLabel("[", n.Value, ']'), bracket.Length);
+            return (new ListLabel("[", n.Value, ']', bracket.Groups[1].Value), bracket.Length);
         }
 
         var trailing = s_trailingLabel.Match(text);
@@ -183,7 +188,7 @@ internal static class ListDetector
             var n = ParseInt(trailing.Groups[1].Value);
             if (n is null) return null;
             var terminator = trailing.Groups[2].Value[0];
-            return (new ListLabel(string.Empty, n.Value, terminator), trailing.Length);
+            return (new ListLabel(string.Empty, n.Value, terminator, trailing.Groups[1].Value), trailing.Length);
         }
 
         return null;
@@ -347,7 +352,8 @@ internal static class ListDetector
                     BoundingBox: item.BoundingBox,
                     StartLineIndex: item.LineIndex,
                     BodyLineIndices: item.BodyLineIndices,
-                    ChildrenLineIndices: item.ChildrenLineIndices));
+                    ChildrenLineIndices: item.ChildrenLineIndices,
+                    RawLabel: item.RawLabelToken));
                 listBox = listBox.Merge(item.BoundingBox);
             }
 
@@ -357,7 +363,28 @@ internal static class ListDetector
                 detectedItems,
                 listBox,
                 FontSize: first.Line.FontSize,
-                FontName: first.Line.FontName);
+                FontName: first.Line.FontName,
+                Kind: ClassifyKind());
+        }
+
+        /// <summary>
+        /// Classifies the run as a numbered-paragraph run — bracketed,
+        /// zero-padded fixed-width labels such as patent <c>[0001]</c> — or an
+        /// ordinary ordered list. The zero-padded width cleanly separates
+        /// patent paragraph numbers from academic <c>[1]</c> references, which
+        /// are one or two unpadded digits.
+        /// </summary>
+        private string ClassifyKind()
+        {
+            const int minParagraphLabelWidth = 4;
+            foreach (var item in _items)
+            {
+                if (item.Label.Prefix != "[" || item.Label.Terminator != ']')
+                    return "ordered";
+                if (item.Label.DigitText.Length < minParagraphLabelWidth)
+                    return "ordered";
+            }
+            return "numbered-paragraph";
         }
     }
 
@@ -384,9 +411,12 @@ internal static class ListDetector
             var stripped = line.Text.Length > clamped ? line.Text[clamped..] : string.Empty;
             _bodyLines.Add(stripped);
 
+            var digits = string.IsNullOrEmpty(label.DigitText)
+                ? label.Number.ToString(CultureInfo.InvariantCulture)
+                : label.DigitText;
             RawLabelToken = string.Concat(
                 label.Prefix,
-                label.Number.ToString(CultureInfo.InvariantCulture),
+                digits,
                 label.Terminator == '\0' ? string.Empty : label.Terminator.ToString());
         }
 
