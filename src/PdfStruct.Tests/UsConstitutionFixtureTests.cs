@@ -87,6 +87,24 @@ public class UsConstitutionFixtureTests
             "First Article reference must appear before first Amendment reference in document order.");
     }
 
+    /// <summary>
+    /// Section headings at the top of a page or column are content, not running
+    /// furniture. They must survive with usable bounding boxes so JSON consumers
+    /// can cite the structural boundary directly.
+    /// </summary>
+    [Fact]
+    public void TopOfColumnSectionHeadingsKeepBoundingBoxes()
+    {
+        var path = FixturePath("us_constitution.pdf");
+        var result = new PdfStructParser().Parse(path);
+
+        AssertHasBox(result.Document.Kids, page: 5, text: "SECTION. 1");
+        AssertHasBox(result.Document.Kids, page: 7, text: "SECTION. 1");
+        AssertHasBox(result.Document.Kids, page: 8, text: "SECTION. 1");
+        AssertHasBox(result.Document.Kids, page: 13, text: "SECTION 2", minLeft: 300);
+        AssertHasBox(result.Document.Kids, page: 15, text: "SECTION 4", minLeft: 300);
+    }
+
     /// <summary>Extracts the text content of any text-bearing element, or empty for non-text element types.</summary>
     private static string GetText(ContentElement element) => element switch
     {
@@ -95,6 +113,18 @@ public class UsConstitutionFixtureTests
         CaptionElement c => c.Text.Content,
         _ => string.Empty
     };
+
+    private static void AssertHasBox(IEnumerable<ContentElement> elements, int page, string text, double minLeft = 0)
+    {
+        var element = elements.FirstOrDefault(e =>
+            e.PageNumber == page
+            && e.BoundingBox.Left >= minLeft
+            && string.Equals(GetText(e).Trim(), text, StringComparison.Ordinal));
+
+        Assert.NotNull(element);
+        Assert.True(element.BoundingBox.Width > 0 && element.BoundingBox.Height > 0,
+            $"{text} on page {page} must have a positive-area bounding box.");
+    }
 
     /// <summary>Parses a Roman numeral (I..MMMM) into its integer value. Throws on invalid input.</summary>
     private static int ParseRoman(string roman)

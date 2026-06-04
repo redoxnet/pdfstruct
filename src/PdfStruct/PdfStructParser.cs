@@ -90,6 +90,13 @@ public sealed class PdfStructParser
         @"^\s*(자료|출처|source|data source|note|notes)\s*[:：]|^\s*https?://|^\s*www\.|doi\.org|^\s*doi\s*:",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Raw line filtering runs before paragraph grouping and heading
+    /// classification, so header candidates must be close to the physical page
+    /// edge. The broader element-level detector still runs after classification.
+    /// </summary>
+    private const double LineHeaderBottomRatio = 0.90;
+
     /// <summary>Initializes with default options.</summary>
     public PdfStructParser() : this(new PdfStructOptions()) { }
 
@@ -2029,9 +2036,9 @@ public sealed class PdfStructParser
     /// <summary>
     /// Classifies a line's bounding box as belonging to the page's header,
     /// footer, or side-furniture band, or returns <c>null</c> when the box
-    /// sits in the body region. Header and footer bands are defined by Y
-    /// ratios; side bands require a narrow-and-tall box hugging the left or
-    /// right page edge.
+    /// sits in the body region. The line-level header band is deliberately
+    /// tighter than the post-classification element detector because this pass
+    /// cannot yet distinguish content headings from page furniture.
     /// </summary>
     private static RunningFurnitureBand? ClassifyRunningFurnitureBand(Models.BoundingBox bbox, PageGeometry pageGeometry)
     {
@@ -2042,7 +2049,7 @@ public sealed class PdfStructParser
         var topRatio = bbox.Top / pageGeometry.Height;
         if (topRatio < RunningFurnitureDetector.FooterBandBottomRatio)
             return RunningFurnitureBand.Footer;
-        if (bottomRatio > 1.0 - RunningFurnitureDetector.HeaderBandTopRatio)
+        if (bottomRatio > LineHeaderBottomRatio)
             return RunningFurnitureBand.Header;
 
         var nearLeftOrRightEdge = bbox.Right <= pageGeometry.Width * 0.12
