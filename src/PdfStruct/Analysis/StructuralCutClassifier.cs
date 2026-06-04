@@ -25,9 +25,14 @@ public static class StructuralCutClassifier
 {
     /// <summary>
     /// Whitespace must span at least this fraction of the page height
-    /// to be considered a candidate vertical (column) cut.
+    /// to be considered a candidate vertical (column) cut. The figure is a
+    /// tuning constant, not a hard boundary: it sits below the common
+    /// partial-height sidebar — a full-width title/abstract header over a
+    /// two-column body leaves the gutter spanning ≈45% of the page on journal
+    /// article first pages (PLOS) — yet high enough to keep equation-internal
+    /// and orphan-tail channels, which are shorter, out.
     /// </summary>
-    public const double VerticalCutMinHeightRatio = 0.5;
+    public const double VerticalCutMinHeightRatio = 0.4;
 
     /// <summary>
     /// Whitespace wider than this fraction of the page width cannot
