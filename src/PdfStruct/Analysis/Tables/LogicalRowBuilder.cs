@@ -58,6 +58,7 @@ internal static class LogicalRowBuilder
     /// <param name="words">The words inside the region, in any order.</param>
     /// <param name="region">The region's bounding box.</param>
     /// <param name="horizontalRuleYs">The y-centres of full-width horizontal rules inside the region.</param>
+    /// <param name="trustDrawnGrid">When the columns are drawn full height, the rule band-count floor is lowered so the drawn horizontal rules define the rows even for a small ruled table.</param>
     /// <returns>The logical rows, each a list of words, top to bottom.</returns>
     public static List<List<Word>> Build(
         IReadOnlyList<Word> words, BoundingBox region, IReadOnlyList<double> horizontalRuleYs,

@@ -70,6 +70,7 @@ internal static class TableCellRecovery
     /// <param name="pageNumber">The 1-indexed page the region sits on.</param>
     /// <param name="columnAnchors">Optional detector-provided stable column anchors, used to seed a borderless single-band grid.</param>
     /// <param name="trustDrawnGrid">When the region's columns are witnessed by drawn vertical rules spanning its height, the grid is trusted without the column-occupancy gate — a ruled sub-table with a single sparse data row is still a grid.</param>
+    /// <param name="drawnLattice">When the region's columns and rows are both drawn but its text occupancy is low, the grid is still asserted if the blanks follow a repeated row-type pattern (a category/data table); see <see cref="HasStructuredSparsePattern"/>.</param>
     /// <returns>The recovered rows, top to bottom, or an empty list when no structure could be read.</returns>
     public static List<TableRow> Recover(
         IReadOnlyList<Word> words,
