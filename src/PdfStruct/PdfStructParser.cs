@@ -2924,14 +2924,18 @@ public sealed class PdfStructParser
         // method name, an italic term), so it should not split the flow. It is
         // only a real boundary in the two shapes a same-size heading takes when
         // weight is the sole heading cue: body text ending a sentence followed
-        // by a bold line (a heading begins), or a lone bold line followed by
-        // regular text (a heading ends). Everything else merges on the gap and
-        // alignment tests below, keeping an emphasised span inside its paragraph.
+        // by a bold line (a heading begins), or a bold-started block followed by
+        // regular text (a heading — possibly a stacked title + sub-title — gives
+        // way to its body). Everything else merges on the gap and alignment
+        // tests below, so an emphasised span inside body text (a bold term in a
+        // regular paragraph) stays in its paragraph. The block-started-bold test
+        // is what tells a bold emphasis returning to regular *within* body apart
+        // from a bold heading handing off to its body.
         if (previous.IsBold != next.IsBold || !IsSameFontFace(previous, next))
         {
             var prevEndsSentence = !SentenceFlow.IsLineContinuation(previous.Text);
             var bodyThenBoldHeading = prevEndsSentence && next.IsBold && !previous.IsBold;
-            var boldHeadingThenBody = previous.IsBold && !next.IsBold && currentBlock.Count < 2;
+            var boldHeadingThenBody = previous.IsBold && !next.IsBold && currentBlock[0].IsBold;
             if (bodyThenBoldHeading || boldHeadingThenBody)
                 return false;
         }
