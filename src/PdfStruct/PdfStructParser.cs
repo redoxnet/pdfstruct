@@ -2207,35 +2207,36 @@ public sealed class PdfStructParser
         IReadOnlyList<PdfRectangle> verticalCuts,
         IReadOnlyList<PdfRectangle> horizontalCuts)
     {
-        var hasVerticalCuts = verticalCuts.Count > 0;
-        var bandTop = hasVerticalCuts ? verticalCuts.Max(g => g.Top) : double.PositiveInfinity;
-        var bandBottom = hasVerticalCuts ? verticalCuts.Min(g => g.Bottom) : double.NegativeInfinity;
         var boundaries = verticalCuts
             .Select(g => (g.Left + g.Right) / 2.0)
             .OrderBy(c => c)
             .ToList();
 
-        var aboveBand = new List<TextLineBlock>();
-        var belowBand = new List<TextLineBlock>();
+        // Columns thread the full height of the page; a gutter that is only
+        // partial-height still defines a column boundary above and below its
+        // own extent (the abstract column on a journal first page runs above
+        // the metadata sidebar that opens the gutter). A line is assigned to a
+        // column by its centre unless it spans a gutter — a full-width title,
+        // by-line, or section heading — in which case it is a spanner read on
+        // its own. Reading order across spanners and columns is settled by the
+        // caller's DetermineReadingOrder, so this method only has to group.
+        var spanners = new List<TextLineBlock>();
         var columns = new List<List<TextLineBlock>>(boundaries.Count + 1);
         for (var i = 0; i < boundaries.Count + 1; i++)
             columns.Add(new List<TextLineBlock>());
 
         foreach (var line in lines)
         {
-            var lineCenterY = (line.Top + line.Bottom) / 2.0;
-            if (lineCenterY > bandTop)
-                aboveBand.Add(line);
-            else if (lineCenterY < bandBottom)
-                belowBand.Add(line);
+            if (CrossesAnyBoundary(line, boundaries))
+                spanners.Add(line);
             else
                 columns[ColumnIndex(line, boundaries)].Add(line);
         }
 
         var result = new List<TextBlock>();
 
-        if (aboveBand.Count > 0)
-            result.AddRange(BuildPageBlocksSingleColumn(aboveBand));
+        if (spanners.Count > 0)
+            result.AddRange(BuildPageBlocksSingleColumn(spanners));
 
         for (var c = 0; c < columns.Count; c++)
         {
@@ -2245,10 +2246,26 @@ public sealed class PdfStructParser
             result.AddRange(MergeColumnSlabWithHorizontalCuts(columns[c], horizontalCuts, slabLeft, slabRight));
         }
 
-        if (belowBand.Count > 0)
-            result.AddRange(BuildPageBlocksSingleColumn(belowBand));
-
         return result;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="line"/> straddles any column
+    /// gutter — its horizontal extent contains a boundary with margin to spare
+    /// on both sides — marking it a full-width spanner (title, by-line, section
+    /// heading, footer) rather than column-local body text. The margin keeps a
+    /// justified column line that reaches the gutter edge from registering as a
+    /// spanner.
+    /// </summary>
+    /// <param name="line">The line to test.</param>
+    /// <param name="boundaries">Gutter centre X-coordinates, ascending.</param>
+    private static bool CrossesAnyBoundary(TextLineBlock line, IReadOnlyList<double> boundaries)
+    {
+        const double margin = 3.0;
+        foreach (var b in boundaries)
+            if (line.Left < b - margin && line.Right > b + margin)
+                return true;
+        return false;
     }
 
     /// <summary>
