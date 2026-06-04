@@ -78,7 +78,8 @@ internal static class TableCellRecovery
         IReadOnlyList<double> horizontalRuleYs,
         int pageNumber,
         IReadOnlyList<double>? columnAnchors = null,
-        bool trustDrawnGrid = false)
+        bool trustDrawnGrid = false,
+        bool drawnLattice = false)
     {
         ArgumentNullException.ThrowIfNull(words);
         ArgumentNullException.ThrowIfNull(groupBoundaries);
@@ -104,11 +105,11 @@ internal static class TableCellRecovery
         }
 
         NormalizeLeadingEmptyColumns(rows);
-        if (IsConfidentGrid(rows, requireOccupancy: !trustDrawnGrid)) return rows;
+        if (IsConfidentGrid(rows, requireOccupancy: !trustDrawnGrid, drawnLattice: drawnLattice)) return rows;
 
         var slotRows = RecoverFromRuledSlots(rowWords, region, groupBoundaries, pageNumber);
         NormalizeLeadingEmptyColumns(slotRows);
-        return IsConfidentGrid(slotRows, requireOccupancy: !trustDrawnGrid) ? slotRows : [];
+        return IsConfidentGrid(slotRows, requireOccupancy: !trustDrawnGrid, drawnLattice: drawnLattice) ? slotRows : [];
     }
 
     /// <summary>
@@ -242,7 +243,8 @@ internal static class TableCellRecovery
     /// </summary>
     /// <param name="rows">The recovered rows.</param>
     /// <param name="requireOccupancy">When false, the column-occupancy share is not required — used when the columns are witnessed by drawn vertical rules, so a ruled sub-table with a single sparse data row still asserts as a grid.</param>
-    private static bool IsConfidentGrid(List<TableRow> rows, bool requireOccupancy = true)
+    /// <param name="drawnLattice">True when the region's columns and rows are both drawn (interior vertical rules spanning its height, plus row rules). A drawn lattice whose text occupancy is low only because its blanks follow a repeated row-type pattern (a category/data table) is still a grid; see <see cref="HasStructuredSparsePattern"/>.</param>
+    private static bool IsConfidentGrid(List<TableRow> rows, bool requireOccupancy = true, bool drawnLattice = false)
     {
         var leafCount = rows
             .SelectMany(r => r.Cells)
@@ -262,7 +264,49 @@ internal static class TableCellRecovery
                     if (j >= 0 && j < leafCount) occupancy[j]++;
 
         var solid = occupancy.Count(o => o >= 0.5 * body.Count);
-        return solid >= SolidColumnShare * leafCount;
+        if (solid >= SolidColumnShare * leafCount) return true;
+
+        return drawnLattice && HasStructuredSparsePattern(body, leafCount);
+    }
+
+    /// <summary>A body row's occupied-column mask, written as one character per leaf column ('1' filled, '0' blank).</summary>
+    private static string RowMask(TableRow row, int leafCount)
+    {
+        var mask = new char[leafCount];
+        Array.Fill(mask, '0');
+        foreach (var cell in row.Cells)
+            for (var j = cell.ColumnNumber - 1; j <= cell.ColumnNumber - 2 + cell.ColumnSpan; j++)
+                if (j >= 0 && j < leafCount) mask[j] = '1';
+        return new string(mask);
+    }
+
+    /// <summary>
+    /// True when a drawn grid's blank cells follow a structured row-type pattern
+    /// rather than scattering at random — a category/data table where a section row
+    /// fills the label and statistic columns and a data row fills the value
+    /// columns. Accepts the grid when its body rows collapse to a few repeated
+    /// occupancy masks (low entropy) and those recurring masks together fill every
+    /// column, so no column is a phantom and the sparseness is real structure.
+    /// </summary>
+    private static bool HasStructuredSparsePattern(List<TableRow> body, int leafCount)
+    {
+        if (body.Count < 4) return false;
+
+        var counts = new Dictionary<string, int>();
+        foreach (var row in body)
+        {
+            var mask = RowMask(row, leafCount);
+            counts[mask] = counts.GetValueOrDefault(mask) + 1;
+        }
+
+        if (counts.Count > Math.Max(4, (int)(0.3 * body.Count))) return false;
+
+        var covered = new bool[leafCount];
+        foreach (var (mask, count) in counts)
+            if (count >= 2)
+                for (var j = 0; j < leafCount; j++)
+                    if (mask[j] == '1') covered[j] = true;
+        return covered.All(c => c);
     }
 
     /// <summary>Splits the region into group bands at the interior vertical rules, left to right.</summary>

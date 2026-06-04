@@ -1445,9 +1445,16 @@ public sealed class PdfStructParser
                 var groupBoundaries = InteriorVerticalRuleCenters(vRules, table.BoundingBox);
                 var ruleYs = RegionHorizontalRuleYs(hRules, table.BoundingBox);
 
+                // A region whose columns and rows are both drawn — vertical rules
+                // running its full height plus row rules — is a real grid even when
+                // its text occupancy is low, provided the blanks follow a repeated
+                // row-type pattern (a category/data table). The recovery checks the
+                // pattern; here we only assert the lattice is drawn.
+                var drawnLattice = FullHeightInteriorRuleCount(vRules, table.BoundingBox) >= 2 && ruleYs.Count >= 2;
+
                 var rows = RecoverRegionRows(
                     regionWords, table.BoundingBox, groupBoundaries, ruleYs, pageGroup.Key,
-                    table.ColumnAnchors, table.RowAnchors.Count);
+                    table.ColumnAnchors, table.RowAnchors.Count, drawnLattice: drawnLattice);
                 if (rows.Count > 0)
                 {
                     ApplyRecoveredRows(table, rows);
@@ -1482,14 +1489,15 @@ public sealed class PdfStructParser
     private static List<Models.TableRow> RecoverRegionRows(
         List<TableCellRecovery.Word> words, Models.BoundingBox box,
         IReadOnlyList<double> groupBoundaries, IReadOnlyList<double> ruleYs,
-        int page, IReadOnlyList<double> columnAnchors, int rowAnchorCount, bool trustDrawnGrid = false)
+        int page, IReadOnlyList<double> columnAnchors, int rowAnchorCount,
+        bool trustDrawnGrid = false, bool drawnLattice = false)
     {
         List<Models.TableRow> RecoverWithRows(IReadOnlyList<double> boundaries)
         {
-            var withRules = TableCellRecovery.Recover(words, box, boundaries, ruleYs, page, columnAnchors, trustDrawnGrid);
+            var withRules = TableCellRecovery.Recover(words, box, boundaries, ruleYs, page, columnAnchors, trustDrawnGrid, drawnLattice);
             if (ruleYs.Count == 0) return withRules;
 
-            var withoutRules = TableCellRecovery.Recover(words, box, boundaries, [], page, columnAnchors, trustDrawnGrid);
+            var withoutRules = TableCellRecovery.Recover(words, box, boundaries, [], page, columnAnchors, trustDrawnGrid, drawnLattice);
             return PreferCompactRows(withRules, withoutRules) ? withoutRules : withRules;
         }
 

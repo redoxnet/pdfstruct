@@ -282,6 +282,46 @@ public class TableCellRecoveryTests
         Assert.Equal("Alpha", CellText(rows[1].Cells[0]));
     }
 
+    [Fact]
+    public void Recover_DrawnLatticeCategoryDataTable_RecoversDespiteLowOccupancy()
+    {
+        // A category/data table: section rows fill the label and statistic columns,
+        // data rows fill the value columns. No value column is filled in a majority
+        // of rows, so the occupancy gate alone rejects it — but the blanks follow a
+        // repeated row-type pattern on a drawn lattice, so it is a real grid.
+        var (words, region, groupBoundaries) = CategoryDataTable();
+
+        var withoutLattice = TableCellRecovery.Recover(words, region, groupBoundaries, [], pageNumber: 1);
+        Assert.Empty(withoutLattice);
+
+        var rows = TableCellRecovery.Recover(words, region, groupBoundaries, [], pageNumber: 1, columnAnchors: null, trustDrawnGrid: false, drawnLattice: true);
+        Assert.Equal(7, rows.Count);
+
+        var categoryRow = rows.Single(r => r.Cells.Any(c => CellText(c) == "CatA"));
+        Assert.Equal([1, 4, 5], categoryRow.Cells.Select(c => c.ColumnNumber).ToArray());
+        var dataRow = rows.Single(r => r.Cells.Any(c => CellText(c) == "ItemA"));
+        Assert.Equal([1, 2, 3], dataRow.Cells.Select(c => c.ColumnNumber).ToArray());
+    }
+
+    /// <summary>A five-column category/data table: three data rows fill columns 1–3, two category rows fill columns 1, 4, 5.</summary>
+    private static (List<TableCellRecovery.Word> Words, BoundingBox Region,
+        List<double> GroupBoundaries) CategoryDataTable()
+    {
+        var words = new List<TableCellRecovery.Word>
+        {
+            W("Var", 85, 700), W("Ctrl", 150, 700), W("Int", 210, 700), W("Stat", 270, 700), W("pval", 330, 700),
+            W("CatA", 85, 686), W("9.9", 270, 686), W("0.10", 330, 686),
+            W("ItemA", 85, 672), W("10", 150, 672), W("20", 210, 672),
+            W("ItemB", 85, 658), W("11", 150, 658), W("21", 210, 658),
+            W("CatB", 85, 644), W("8.8", 270, 644), W("0.20", 330, 644),
+            W("ItemC", 85, 630), W("12", 150, 630), W("22", 210, 630),
+            W("ItemD", 85, 616), W("13", 150, 616), W("23", 210, 616),
+        };
+        var region = new BoundingBox(50, 608, 360, 712);
+        var groupBoundaries = new List<double> { 120, 180, 240, 300 };
+        return (words, region, groupBoundaries);
+    }
+
     private static string CellText(TableCell cell) =>
         string.Join(" ", cell.Kids.OfType<ParagraphElement>().Select(p => p.Text.Content));
 

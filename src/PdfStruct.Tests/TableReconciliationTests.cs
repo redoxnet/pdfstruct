@@ -128,8 +128,7 @@ public class TableReconciliationTests
 
         var tables = doc.Kids.OfType<TableElement>().ToList();
         Assert.Equal(5, tables.Count);
-        Assert.Equal(4, tables.Count(t => t.Rows.Count > 0));
-        Assert.Single(tables, t => t.Rows.Count == 0);
+        Assert.All(tables, t => Assert.NotEmpty(t.Rows));
 
         var beck = tables.Single(t => t.Rows
             .SelectMany(r => r.Cells)
@@ -138,6 +137,20 @@ public class TableReconciliationTests
         Assert.Equal(6, beck.NumberOfColumns);
         Assert.Contains(beck.Rows.SelectMany(r => r.Cells), c => CellText(c) == "Post-test");
         Assert.Contains(beck.Rows.SelectMany(r => r.Cells), c => CellText(c).Contains("−7.04", StringComparison.Ordinal));
+
+        // The demographics table is a category/data grid: its blanks follow a
+        // repeated row-type pattern, so the drawn-lattice gate recovers it even
+        // though text occupancy alone is low. A category row carries the statistic
+        // columns with the value columns blank; a data row is the reverse.
+        var demographics = tables.Single(t => t.Rows
+            .SelectMany(r => r.Cells)
+            .Any(c => CellText(c).StartsWith("Sex, n", StringComparison.Ordinal)));
+        Assert.Equal(5, demographics.NumberOfColumns);
+        var sexRow = demographics.Rows.Single(r => r.Cells.Any(c => CellText(c).StartsWith("Sex, n", StringComparison.Ordinal)));
+        Assert.Contains(sexRow.Cells, c => CellText(c).Contains("0.223", StringComparison.Ordinal));
+        Assert.DoesNotContain(sexRow.Cells, c => c.ColumnNumber == 2);
+        var femaleRow = demographics.Rows.Single(r => r.Cells.Any(c => CellText(c) == "Female"));
+        Assert.Contains(femaleRow.Cells, c => c.ColumnNumber == 2 && CellText(c).Contains("16", StringComparison.Ordinal));
     }
 
     private static string ElementText(ContentElement element) => element switch
