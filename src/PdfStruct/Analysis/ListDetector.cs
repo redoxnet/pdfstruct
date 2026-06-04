@@ -53,15 +53,13 @@ internal sealed record DetectedListItem(
 /// <param name="BoundingBox">Union of every item's bounding box.</param>
 /// <param name="FontSize">Font size of the first item's start line, propagated for downstream layout reasoning.</param>
 /// <param name="FontName">Font name of the first item's start line.</param>
-/// <param name="Kind">The run's semantic kind: <c>"ordered"</c> for an ordinary numbered list or references, or <c>"numbered-paragraph"</c> for bracketed zero-padded paragraph labels (patent <c>[0001]</c> runs) that must keep their printed marker rather than be Markdown-renumbered.</param>
 internal sealed record DetectedList(
     string CommonPrefix,
     char Terminator,
     IReadOnlyList<DetectedListItem> Items,
     BoundingBox BoundingBox,
     double FontSize,
-    string FontName,
-    string Kind);
+    string FontName);
 
 /// <summary>
 /// Per-page output of <see cref="ListDetector.Detect"/>.
@@ -148,6 +146,11 @@ internal static class ListDetector
         {
             if (candidate.ItemCount < 2) continue;
             if (candidate.AllLabelsLookLikeDecimals(s_decimalLabel)) continue;
+            // Bracketed zero-padded runs ([0001], [0002], ...) are patent
+            // numbered paragraphs, not list items: leave them in the residual
+            // so the normal paragraph merger groups each by its own body flow
+            // and a stray marker never swallows an intervening heading.
+            if (candidate.IsNumberedParagraphRun()) continue;
 
             AbsorbTerritories(candidate, pageLines, claimed);
             foreach (var lineIndex in candidate.AllClaimedLineIndices()) claimed.Add(lineIndex);
@@ -373,28 +376,27 @@ internal static class ListDetector
                 detectedItems,
                 listBox,
                 FontSize: first.Line.FontSize,
-                FontName: first.Line.FontName,
-                Kind: ClassifyKind());
+                FontName: first.Line.FontName);
         }
 
         /// <summary>
-        /// Classifies the run as a numbered-paragraph run — bracketed,
-        /// zero-padded fixed-width labels such as patent <c>[0001]</c> — or an
-        /// ordinary ordered list. The zero-padded width cleanly separates
-        /// patent paragraph numbers from academic <c>[1]</c> references, which
-        /// are one or two unpadded digits.
+        /// Returns <c>true</c> when every label is a bracketed zero-padded
+        /// fixed-width number (patent <c>[0001]</c>...). Such runs are numbered
+        /// paragraphs handled as prose, not ordered lists; the zero-padded
+        /// width cleanly separates them from academic <c>[1]</c> references,
+        /// which are one or two unpadded digits.
         /// </summary>
-        private string ClassifyKind()
+        public bool IsNumberedParagraphRun()
         {
             const int minParagraphLabelWidth = 4;
             foreach (var item in _items)
             {
                 if (item.Label.Prefix != "[" || item.Label.Terminator != ']')
-                    return "ordered";
+                    return false;
                 if (item.Label.DigitText.Length < minParagraphLabelWidth)
-                    return "ordered";
+                    return false;
             }
-            return "numbered-paragraph";
+            return true;
         }
     }
 

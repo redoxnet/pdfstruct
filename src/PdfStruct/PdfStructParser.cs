@@ -82,6 +82,9 @@ public sealed class PdfStructParser
     /// <summary>A line opening with a footnote marker (dagger, asterisk, section, pilcrow).</summary>
     private static readonly Regex FootnoteMarkerPattern = new(@"^\s*[†‡*§¶]", RegexOptions.Compiled);
 
+    /// <summary>A paragraph opening with a patent numbered-paragraph marker — a bracketed zero-padded number of at least four digits, e.g. <c>[0001]</c>.</summary>
+    private static readonly Regex NumberedParagraphMarkerPattern = new(@"^\s*(\[\d{4,}\])\s+", RegexOptions.Compiled);
+
     /// <summary>A line that is a source note ("자료:", "출처:", "Source:", "Note:") or a URL/DOI.</summary>
     private static readonly Regex SourceNoteOrUrlPattern = new(
         @"^\s*(자료|출처|source|data source|note|notes)\s*[:：]|^\s*https?://|^\s*www\.|doi\.org|^\s*doi\s*:",
@@ -444,6 +447,8 @@ public sealed class PdfStructParser
         {
             RecoverTableCells(doc.Kids, pdf, pageVerticalRules, pageHorizontalRules);
         }
+
+        ExtractNumberedParagraphMarkers(doc.Kids);
 
         RenumberElements(doc.Kids);
 
@@ -1868,7 +1873,7 @@ public sealed class PdfStructParser
             Id = id,
             PageNumber = pageNumber,
             BoundingBox = list.BoundingBox,
-            NumberingStyle = list.Kind,
+            NumberingStyle = "ordered",
             NumberOfListItems = list.Items.Count
         };
         foreach (var item in list.Items)
@@ -1945,6 +1950,31 @@ public sealed class PdfStructParser
                 : lines.Where((_, index) => !rail.Contains(index)).ToList();
         }
         return result;
+    }
+
+    /// <summary>
+    /// Lifts a patent numbered-paragraph marker (<c>[0001]</c>) from the start
+    /// of a paragraph's text into its <see cref="Models.ParagraphElement.Marker"/>
+    /// field, stripping it from the content. The marker reached the paragraph
+    /// body via <see cref="NumberedParagraphRailAssociator"/>, which folds the
+    /// split rail marker onto its body line before paragraph merging; this
+    /// restores the marker as structured metadata after the prose has been
+    /// grouped by its own body flow.
+    /// </summary>
+    /// <param name="elements">The document's top-level content elements.</param>
+    private static void ExtractNumberedParagraphMarkers(IEnumerable<Models.ContentElement> elements)
+    {
+        foreach (var element in elements)
+        {
+            if (element is not Models.ParagraphElement paragraph || paragraph.Marker is not null)
+                continue;
+
+            var match = NumberedParagraphMarkerPattern.Match(paragraph.Text.Content);
+            if (!match.Success) continue;
+
+            paragraph.Marker = match.Groups[1].Value;
+            paragraph.Text.Content = paragraph.Text.Content[match.Length..];
+        }
     }
 
     /// <summary>

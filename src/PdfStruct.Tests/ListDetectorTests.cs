@@ -63,8 +63,10 @@ public class ListDetectorTests
     }
 
     [Fact]
-    public void Detect_BracketedZeroPaddedRun_IsNumberedParagraphWithVerbatimLabels()
+    public void Detect_BracketedZeroPaddedRun_IsNotClaimedAsList()
     {
+        // Patent numbered paragraphs are prose, handled downstream as
+        // ParagraphElements with a marker — not ordered lists.
         var lines = new[]
         {
             Line("[0001] First patent paragraph.", left: 64, baseline: 700),
@@ -74,14 +76,12 @@ public class ListDetectorTests
 
         var result = ListDetector.Detect(lines);
 
-        var list = Assert.Single(result.Lists);
-        Assert.Equal("numbered-paragraph", list.Kind);
-        Assert.Equal("[0001]", list.Items[0].RawLabel);
-        Assert.Equal("[0003]", list.Items[2].RawLabel);
+        Assert.Empty(result.Lists);
+        Assert.Equal(3, result.ResidualLines.Count);
     }
 
     [Fact]
-    public void Detect_BracketedSingleDigitReferences_StayOrdered()
+    public void Detect_BracketedSingleDigitReferences_StayOrderedWithVerbatimLabels()
     {
         var lines = new[]
         {
@@ -93,8 +93,8 @@ public class ListDetectorTests
         var result = ListDetector.Detect(lines);
 
         var list = Assert.Single(result.Lists);
-        Assert.Equal("ordered", list.Kind);
         Assert.Equal("[1]", list.Items[0].RawLabel);
+        Assert.Equal("[3]", list.Items[2].RawLabel);
     }
 
     [Fact]
@@ -102,10 +102,10 @@ public class ListDetectorTests
     {
         var lines = new[]
         {
-            Line("[0001] First patent paragraph.", left: 64, baseline: 700, fontSize: 9),
+            Line("1. First list item.", left: 64, baseline: 700, fontSize: 9),
             Line("continuation of first.", left: 64, baseline: 688, fontSize: 9),
-            Line("배 경 기 술", left: 64, baseline: 660, fontSize: 11),
-            Line("[0002] Second patent paragraph.", left: 64, baseline: 632, fontSize: 9),
+            Line("Section Heading", left: 64, baseline: 660, fontSize: 11),
+            Line("2. Second list item.", left: 64, baseline: 632, fontSize: 9),
             Line("continuation of second.", left: 64, baseline: 620, fontSize: 9)
         };
 
@@ -115,7 +115,7 @@ public class ListDetectorTests
         Assert.Equal(2, list.Items.Count);
         var firstItemClaimed = list.Items[0].ClaimedLineIndices.ToHashSet();
         Assert.DoesNotContain(2, firstItemClaimed); // the heading line index
-        Assert.Contains(result.ResidualLines, l => l.Text == "배 경 기 술");
+        Assert.Contains(result.ResidualLines, l => l.Text == "Section Heading");
     }
 
     [Fact]

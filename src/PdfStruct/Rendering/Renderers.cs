@@ -46,6 +46,7 @@ public sealed class MarkdownRenderer : IDocumentRenderer
                 break;
 
             case ParagraphElement p:
+                if (p.Marker is not null) sb.Append(p.Marker).Append(' ');
                 sb.AppendLine(p.Text.Content);
                 break;
 
@@ -175,33 +176,6 @@ public sealed class MarkdownRenderer : IDocumentRenderer
 
     private static void RenderList(ListElement list, StringBuilder sb)
     {
-        // Numbered paragraphs (patent [0001] runs) are prose, not list items:
-        // each renders as its own paragraph keeping its printed marker, never
-        // collapsed to a Markdown ordered-list counter.
-        if (list.NumberingStyle == "numbered-paragraph")
-        {
-            foreach (var item in list.ListItems)
-            {
-                var marker = item.Label ?? item.Number?.ToString() ?? string.Empty;
-                sb.Append(marker).Append(' ').AppendLine(item.Text.Content);
-                // A numbered paragraph is one prose block: its continuation
-                // lines render flush and tight against the first line (a
-                // four-space indent would become a Markdown code block, and a
-                // blank line between them would split one paragraph into many).
-                // A single blank line closes the whole paragraph.
-                foreach (var child in item.Kids)
-                {
-                    if (child is ParagraphElement p)
-                        foreach (var line in p.Text.Content.Split('\n'))
-                            sb.AppendLine(line);
-                    else
-                        RenderListItemChild(child, sb);
-                }
-                sb.AppendLine();
-            }
-            return;
-        }
-
         var ordered = list.NumberingStyle is "ordered" or "decimal" or "roman";
         for (int i = 0; i < list.ListItems.Count; i++)
         {
@@ -308,6 +282,7 @@ public sealed class JsonRenderer : IDocumentRenderer
                 AddText(dict, h.Text);
                 break;
             case ParagraphElement p:
+                if (p.Marker is not null) dict["marker"] = p.Marker;
                 AddText(dict, p.Text);
                 break;
             case RegionElement region:

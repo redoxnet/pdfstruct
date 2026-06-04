@@ -90,31 +90,23 @@ public class MarkdownRendererTests
     }
 
     [Fact]
-    public void RenderList_NumberedParagraph_PreservesPrintedMarker()
+    public void RenderParagraph_WithMarker_PrependsMarker()
     {
-        var list = new ListElement { NumberingStyle = "numbered-paragraph" };
-        list.ListItems.Add(NumberedParagraph("[0001]", 1, "본 기술은 MRI 기반 전도도 측정에 관한 것이다."));
-        list.ListItems.Add(NumberedParagraph("[0002]", 2, "암 치료필드는 중간 주파수 범위의 전기필드이다."));
         var document = new PdfDocument();
-        document.Kids.Add(list);
+        document.Kids.Add(new ParagraphElement
+        {
+            Marker = "[0001]",
+            Text = new TextProperties { Content = "본 기술은 MRI 기반 전도도 측정에 관한 것이다." }
+        });
 
         var markdown = new MarkdownRenderer().Render(document);
 
         Assert.Contains("[0001] 본 기술은 MRI 기반 전도도 측정에 관한 것이다.", markdown);
-        Assert.Contains("[0002] 암 치료필드는 중간 주파수 범위의 전기필드이다.", markdown);
-        Assert.DoesNotContain("1. 본 기술은", markdown);
     }
 
     private static ListItem ListItemWith(int? number, string content) => new()
     {
         Number = number,
-        Text = new TextProperties { Content = content }
-    };
-
-    private static ListItem NumberedParagraph(string label, int number, string content) => new()
-    {
-        Number = number,
-        Label = label,
         Text = new TextProperties { Content = content }
     };
 

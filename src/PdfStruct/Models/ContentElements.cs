@@ -62,6 +62,14 @@ public sealed class ParagraphElement : ContentElement
     /// <inheritdoc />
     public override string Type => "paragraph";
 
+    /// <summary>
+    /// Gets or sets the verbatim leading marker that labels this paragraph
+    /// (a patent numbered-paragraph token such as <c>[0001]</c>), or
+    /// <c>null</c> for an ordinary paragraph. The marker is held separately
+    /// from <see cref="Text"/>; <see cref="Text"/>.<c>Content</c> excludes it.
+    /// </summary>
+    public string? Marker { get; set; }
+
     /// <summary>Gets or sets the text properties.</summary>
     public TextProperties Text { get; set; } = new();
 }
