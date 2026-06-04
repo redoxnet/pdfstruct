@@ -2920,11 +2920,21 @@ public sealed class PdfStructParser
         if (!IsSameFontSize(previous, next))
             return false;
 
-        if (previous.IsBold != next.IsBold)
-            return false;
-
-        if (!IsSameFontFace(previous, next))
-            return false;
+        // A weight/face change mid-paragraph is usually inline emphasis (a bold
+        // method name, an italic term), so it should not split the flow. It is
+        // only a real boundary in the two shapes a same-size heading takes when
+        // weight is the sole heading cue: body text ending a sentence followed
+        // by a bold line (a heading begins), or a lone bold line followed by
+        // regular text (a heading ends). Everything else merges on the gap and
+        // alignment tests below, keeping an emphasised span inside its paragraph.
+        if (previous.IsBold != next.IsBold || !IsSameFontFace(previous, next))
+        {
+            var prevEndsSentence = !SentenceFlow.IsLineContinuation(previous.Text);
+            var bodyThenBoldHeading = prevEndsSentence && next.IsBold && !previous.IsBold;
+            var boldHeadingThenBody = previous.IsBold && !next.IsBold && currentBlock.Count < 2;
+            if (bodyThenBoldHeading || boldHeadingThenBody)
+                return false;
+        }
 
         if (!AreHorizontallyOverlapping(previous, next))
             return false;
